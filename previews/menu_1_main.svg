@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="884" height="768" font-family="Menlo,monospace">
+<rect width="884" height="768" fill="#0d0f14"/>
+<text x="8" y="16" fill="#7a8599" font-size="12">Layout preview (not a game capture): wrist menu, green = added by the mod</text>
+<text x="364" y="66" fill="#9fb3cf" font-size="18" text-anchor="middle">Stats</text>
+<text x="364" y="170" fill="#e8c46a" font-size="23" text-anchor="middle">Reset All Tutorials</text>
+<text x="364" y="222" fill="#e8c46a" font-size="23" text-anchor="middle">Reset All Options</text>
+<text x="364" y="326" fill="#e8c46a" font-size="28" text-anchor="middle">GAME OPTIONS</text>
+<text x="364" y="378" fill="#e8c46a" font-size="28" text-anchor="middle">MOVEMENT OPTIONS</text>
+<text x="364" y="430" fill="#e8c46a" font-size="28" text-anchor="middle">TURNING OPTIONS</text>
+<text x="364" y="482" fill="#e8c46a" font-size="28" text-anchor="middle">AUDIO OPTIONS</text>
+<text x="364" y="534" fill="#e8c46a" font-size="28" text-anchor="middle">PERFORMANCE OPTIONS</text>
+<text x="364" y="586" fill="#5cf2a0" font-size="28" text-anchor="middle">CO-OP MULTIPLAYER</text>
+<text x="364" y="638" fill="#e8c46a" font-size="23" text-anchor="middle">End Run And Return To HQ</text>
+</svg>
