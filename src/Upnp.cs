@@ -32,6 +32,8 @@ namespace CompoundMP
 		public volatile string Status = "UPnP: starting";
 		public volatile string ExternalIp;
 		public volatile bool Mapped;
+		public NatPmp Pmp = new NatPmp();
+		bool usingPmp;
 		public int Port { get; private set; }
 
 		readonly ManualResetEvent stop = new ManualResetEvent(false);
@@ -57,12 +59,16 @@ namespace CompoundMP
 		{
 			try
 			{
-				if (!FindGateway(description)) { if (!Mapped) Status = Status.StartsWith("UPnP: failed") ? Status : "UPnP: no gateway found"; return; }
+				if (!FindGateway(description))
+				{
+					bool upnpFailed = Status.StartsWith("UPnP: failed");
+					if (stop.WaitOne(0) || !TryNatPmp()) { Status = upnpFailed ? Status : "UPnP / NAT-PMP: no gateway found"; return; }
+				}
 				while (!stop.WaitOne(leaseSeconds > 0 ? leaseSeconds * 500 : Timeout.Infinite))
 				{
 					// Lease-limited router: renew at half-life.
-					try { AddMapping(description, leaseSeconds); }
-					catch (Exception e) { Log("UPnP renew failed: " + e.Message); }
+					try { if (usingPmp) Pmp.Map(Port, leaseSeconds); else AddMapping(description, leaseSeconds); }
+					catch (Exception e) { Log("port mapping renew failed: " + e.Message); }
 				}
 			}
 			catch (Exception e) { Status = "UPnP: failed (" + e.Message + ")"; Log("UPnP: " + e); }
@@ -70,13 +76,37 @@ namespace CompoundMP
 			{
 				if (Mapped)
 				{
-					try { SoapCall("DeletePortMapping", "<NewRemoteHost></NewRemoteHost><NewExternalPort>" + Port + "</NewExternalPort><NewProtocol>UDP</NewProtocol>"); Log("UPnP mapping removed"); }
-					catch (Exception e) { Log("UPnP unmap failed: " + e.Message); }
+					try
+					{
+						if (usingPmp) { Pmp.Unmap(Port); Log("NAT-PMP mapping removed"); }
+						else { SoapCall("DeletePortMapping", "<NewRemoteHost></NewRemoteHost><NewExternalPort>" + Port + "</NewExternalPort><NewProtocol>UDP</NewProtocol>"); Log("UPnP mapping removed"); }
+					}
+					catch (Exception e) { Log("unmap failed: " + e.Message); }
 					Mapped = false;
 				}
 			}
 		}
 
+		// Routers with UPnP switched off often still speak NAT-PMP.
+		bool TryNatPmp()
+		{
+			Status = "NAT-PMP: asking the router";
+			if (!Pmp.QueryExternalAddress()) return false;
+			int granted = Pmp.Map(Port, 7200);
+			if (granted == 0) { Status = "NAT-PMP: the router refused the mapping"; return false; }
+			usingPmp = true; leaseSeconds = granted; Mapped = true; ExternalIp = Pmp.ExternalIp;
+			Status = "NAT-PMP: port " + Port + " open, public IP " + ExternalIp + Describe(ExternalIp);
+			return true;
+		}
+
+		// Why friends might not reach a host even though a mapping exists.
+		public static string Describe(string ip)
+		{
+			if (ip == null) return "";
+			if (IsCgnat(ip)) return " (carrier-grade NAT: friends cannot reach you; use a VPN such as Tailscale)";
+			if (IsPrivate(ip)) return " (behind another router; internet play may fail)";
+			return "";
+		}
 		bool FindGateway(string description)
 		{
 			Status = "UPnP: searching for router";
@@ -113,7 +143,7 @@ namespace CompoundMP
 					Mapped = true;
 					try { ExternalIp = ParseTag(SoapCall("GetExternalIPAddress", ""), "NewExternalIPAddress"); } catch (Exception e) { Log("GetExternalIPAddress failed: " + e.Message); }
 					Status = "UPnP: port " + Port + " open" + (ExternalIp != null ? ", public IP " + ExternalIp : "");
-					if (ExternalIp != null && IsPrivate(ExternalIp)) Status += " (router is behind another NAT; internet play may fail)";
+					Status += Describe(ExternalIp);
 					return true;
 				}
 				catch (UpnpError e)
@@ -266,6 +296,14 @@ namespace CompoundMP
 			var doc = new XmlDocument();
 			doc.LoadXml(xml);
 			return doc.SelectSingleNode("//*[local-name()='" + tag + "']")?.InnerText.Trim();
+		}
+
+		// 100.64.0.0/10: shared address space used by ISPs for carrier-grade NAT.
+		public static bool IsCgnat(string ip)
+		{
+			if (!IPAddress.TryParse(ip, out var a)) return false;
+			var b = a.GetAddressBytes();
+			return b.Length == 4 && b[0] == 100 && b[1] >= 64 && b[1] <= 127;
 		}
 
 		public static bool IsPrivate(string ip)

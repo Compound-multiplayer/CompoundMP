@@ -143,7 +143,8 @@ Check(Wait(host, out _) != null, "host survives junk packet");
 	Check(Upnp.IsPrivate("192.168.1.5") && Upnp.IsPrivate("10.0.0.1") && !Upnp.IsPrivate("203.0.113.7"), "private-address detection");
 
 	// No router at all: must fail quietly and not hang.
-	var none = new Upnp { SsdpEndpoint = new IPEndPoint(IPAddress.Loopback, 9), LocalAddresses = () => new[] { IPAddress.Loopback }, DiscoverMs = 300 };
+	var none = new Upnp { SsdpEndpoint = new IPEndPoint(IPAddress.Loopback, 9), LocalAddresses = () => new[] { IPAddress.Loopback }, DiscoverMs = 300,
+		Pmp = new NatPmp { Gateway = new IPEndPoint(IPAddress.Loopback, 9), TimeoutMs = 100, Tries = 1 } }; // never touch the real router in tests
 	none.Start(27777, "test");
 	Thread.Sleep(1200);
 	Check(!none.Mapped && none.Status.Contains("no gateway"), "no router: reports no gateway (" + none.Status + ")");
@@ -235,6 +236,51 @@ Check(Wait(host, out _) != null, "host survives junk packet");
 	ac.SendTo(hostEp, Proto.State, w => w.Write("lost"));
 	Check(Wait(ah, out _, 300) == null, "simulated loss drops packets");
 	ah.Close(); ac.Close(); ac2.Close(); raw.Close();
+}
+
+// ---- NAT-PMP fallback against a fake gateway, and CGNAT detection ----
+{
+	var gw = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+	var gwEp = (IPEndPoint)gw.Client.LocalEndPoint;
+	var pmpLog = new System.Collections.Generic.List<string>();
+	new Thread(() =>
+	{
+		try
+		{
+			while (true)
+			{
+				var from = new IPEndPoint(IPAddress.Any, 0);
+				var d = gw.Receive(ref from);
+				byte[] resp;
+				if (d[1] == 0) resp = new byte[] { 0, 128, 0, 0, 0, 0, 0, 1, 203, 0, 113, 9 };
+				else
+				{
+					int life = (d[8] << 24) | (d[9] << 16) | (d[10] << 8) | d[11];
+					lock (pmpLog) pmpLog.Add($"map internal={(d[4] << 8) | d[5]} external={(d[6] << 8) | d[7]} life={life}");
+					resp = new byte[] { 0, 129, 0, 0, 0, 0, 0, 1, d[4], d[5], d[4], d[5], d[8], d[9], d[10], d[11] };
+				}
+				gw.Send(resp, resp.Length, from);
+			}
+		}
+		catch { }
+	}) { IsBackground = true }.Start();
+
+	var viaPmp = new Upnp { SsdpEndpoint = new IPEndPoint(IPAddress.Loopback, 9), LocalAddresses = () => new[] { IPAddress.Loopback }, DiscoverMs = 300,
+		Pmp = new NatPmp { Gateway = gwEp, TimeoutMs = 300 } };
+	viaPmp.Start(27777, "test");
+	var pmpUntil = DateTime.UtcNow.AddSeconds(8);
+	while (!viaPmp.Mapped && DateTime.UtcNow < pmpUntil) Thread.Sleep(50);
+	Check(viaPmp.Mapped && viaPmp.ExternalIp == "203.0.113.9", "NAT-PMP maps the port when UPnP finds no gateway: " + viaPmp.Status);
+	viaPmp.Stop();
+	lock (pmpLog)
+	{
+		Check(pmpLog.Exists(l => l.Contains("internal=27777 external=27777 life=7200")), "NAT-PMP map request asks for a 2 h lease");
+		Check(pmpLog.Exists(l => l.Contains("external=0 life=0")), "NAT-PMP mapping is removed on stop");
+	}
+	Check(Upnp.IsCgnat("100.64.1.2") && Upnp.IsCgnat("100.127.255.254") && !Upnp.IsCgnat("100.128.0.1") && !Upnp.IsCgnat("192.168.1.1"), "CGNAT range detection");
+	Check(Upnp.Describe("100.70.1.1").Contains("carrier-grade") && Upnp.Describe("192.168.1.2").Contains("another router") && Upnp.Describe("203.0.113.9") == "", "status explains CGNAT / double NAT");
+	var dead = new NatPmp { Gateway = new IPEndPoint(IPAddress.Loopback, 9), TimeoutMs = 100, Tries = 1 };
+	Check(!dead.QueryExternalAddress(), "NAT-PMP reports failure when the gateway does not answer");
 }
 
 host.Close(); c1.Close(); c2.Close();
