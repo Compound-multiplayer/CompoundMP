@@ -59,6 +59,10 @@ public class GlobalGameInfo : Singleton<GlobalGameInfo> {
 	public GameObject RightController;
 }
 
+public class GrowWhenFacing : MonoBehaviour {
+	public void SetOverrideBig(bool overrideBig) { }
+}
+
 public class HitscanBulletController : BulletController {
 }
 
@@ -96,6 +100,7 @@ public class MenuButton : MonoBehaviour {
 	}
 	public Transform MenuTransform;
 	public GameObject MenuPrefab;
+	public GrowWhenFacing Grower;
 }
 
 public class MenuOption : ASCIIText, MenuOptionInterface {
