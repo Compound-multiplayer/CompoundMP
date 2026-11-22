@@ -8,17 +8,8 @@ Specs for the co-op mod, in the [OpenSpec](https://github.com/Fission-AI/OpenSpe
 
 ## Open proposals
 - `verify-in-headset`: Record what has to be checked with real VR hardware, because every test so far ran headless.
-- `add-impact-effect-replication`: Show hit sparks, muzzle flashes, explosions and their sounds on every machine.
-- `add-level-transition-sync`: Move all players between levels together.
-- `add-vr-text-entry`: Let VR players enter hostnames and passwords without a keyboard.
-- `add-steam-friend-join`: Join a friend through Steam instead of typing an address.
-- `add-session-encryption`: Authenticate peers and protect session traffic.
-- `add-nat-fallbacks`: Connect hosts that UPnP cannot help.
-- `add-reference-stubs-for-ci`: Let CI compile the plugin without the game's copyrighted assemblies.
-- `add-gpu-screenshot-capture`: Capture real screenshots of the menu and multiplayer view.
-- `add-network-load-metrics`: Measure what the mod costs in bandwidth and frame time.
-- `add-run-outcome-sync`: Define what happens when players die or the host leaves.
-- `add-lan-discovery`: Find hosts on the local network without typing an address.
+- `add-gpu-screenshot-capture`: Capture real screenshots of the menu and a multiplayer view.
+- `add-steam-rich-presence`: Join a friend with the "Join Game" button in the Steam friends list.
 
 ## Archived
 - `2026-11-22-add-udp-session-transport`: Plain UDP transport between one host and many clients, carrying small typed packets.
@@ -34,3 +25,13 @@ Specs for the co-op mod, in the [OpenSpec](https://github.com/Fission-AI/OpenSpe
 - `2026-11-22-add-protocol-tests`: Test the wire protocol, transport, reliable delivery and UPnP without the game.
 - `2026-11-22-add-headless-test-driver`: Exercise the mod in the real game without a headset or display.
 - `2026-11-22-add-ci-pipeline`: Check every push automatically before the project is published.
+- `2026-11-22-add-session-authentication`: Authenticate peers with a shared password and reject forged or altered packets, without ever sending the password.
+- `2026-11-22-add-nat-pmp-fallback`: Open the host's port on routers that have UPnP switched off, and explain the cases no mapping can fix.
+- `2026-11-22-add-lan-discovery`: Find hosts on the local network without typing an address.
+- `2026-11-22-add-vr-text-entry`: Enter hostnames and the password, and pick hosts, without a keyboard.
+- `2026-11-22-add-level-transition-sync`: Move all players between levels together, led by the host.
+- `2026-11-22-add-impact-effect-replication`: Show impact effects and their sounds on every machine.
+- `2026-11-22-add-network-metrics`: Make the mod's network cost visible and testable.
+- `2026-11-22-add-run-notices`: Tell players what happens to the others, and end the session cleanly when the host leaves.
+- `2026-11-22-add-steam-connect-link`: Join a friend from a Steam link instead of typing an address.
+- `2026-11-22-add-reference-stubs-for-ci`: Compile the plugin in CI without the game's copyrighted assemblies.

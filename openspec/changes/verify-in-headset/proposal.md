@@ -1,10 +1,10 @@
 # Change: Verify in headset
 
 ## Why
-No test used a headset or controllers. The wrist-menu spacing, finger-poke accuracy, avatar scale and projectile visibility are only verified by code-level checks.
+No test used a headset or controllers. Poke accuracy, key spacing, text scale, avatar offset and projectile visibility are verified only by code-level checks (every control is found by the same overlap test the hand uses).
 
 ## What Changes
-- Write a short playtest script covering host, join, keypad entry, damage, projectiles and leaving.
+- Write a short playtest script covering host, join, keyboard entry, damage, projectiles, level change and leaving.
 - Record results (headset, runtime, player count) in `docs/playtests/`.
 - Fix whatever the playtest finds (key size and spacing, text scale, avatar offset).
 

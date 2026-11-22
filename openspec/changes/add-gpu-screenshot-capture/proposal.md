@@ -1,12 +1,12 @@
 # Change: Add gpu screenshot capture
 
 ## Why
-Under CrossOver the game gets no GPU, so only layout drawings exist. `Shot.cs` is written but has never run.
+Under CrossOver the game renders but every frame comes back black (see below), so only layout drawings exist. The capture helper (`Shot.cs`, `DumpMenu`, `ScreenshotDir`) is written and runs end to end, saving PNGs.
 
 ## What Changes
-- Run the existing `DumpMenu` + `ScreenshotDir` scenario on a machine where the game renders (Windows PC).
+- Run the existing scenario on a machine where the game renders (a Windows PC).
 - Add a host-side camera that frames a remote avatar and an enemy for a multiplayer screenshot.
-- Optionally call Steam's screenshot function so players can use the overlay shortcut.
+- Commit the PNGs under `docs/screenshots/` and replace the SVG previews in the README.
 
 ## Impact
 - Affected specs: `screenshot-capture`
