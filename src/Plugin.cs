@@ -75,6 +75,10 @@ namespace CompoundMP
 			debugDumpMenu = Config.Bind("Debug", "DumpMenu", false, "Log the game's VR menu hierarchy (development)");
 			debugCombat = Config.Bind("Debug", "Combat", false, "Run a scripted enemy/damage sync check once enemies exist (headless testing)");
 			autoStartMode = autoStart.Value;
+			// Steam passes "+connect <host:port>" when the game is started from a steam://run/615120//+connect%20<host:port> link.
+			var cmd = Environment.GetCommandLineArgs();
+			for (int i = 0; i + 1 < cmd.Length; i++)
+				if (cmd[i] == "+connect" || cmd[i] == "--connect") { joinAddress.Value = cmd[i + 1]; autoStartMode = "join"; Logger.LogInfo("Joining " + cmd[i + 1] + " (from the command line)"); }
 			var harmony = new Harmony("com.compoundmp.coop");
 			harmony.PatchAll(typeof(Plugin).Assembly);
 			foreach (var m in harmony.GetPatchedMethods()) Logger.LogInfo("Patched " + m.DeclaringType.Name + "." + m.Name);
@@ -313,10 +317,16 @@ internal bool Welcomed => welcomed;
 			if (net.IsHost) return $"Hosting on port {port.Value} - {net.Clients.Count} player(s) connected";
 			return HasHostSeed ? "Joined - synced with host" : "Joining " + net.HostEp + "...";
 		}
+		string inviteLogged = "";
 		internal string NetLine()
 		{
 			if (net == null || !net.IsHost) return net == null ? "Return to HQ and start a new run once connected" : "Start a new run from HQ to play together";
 			if (upnp == null) return "UPnP off - forward UDP " + port.Value + " or use a VPN";
+			if (upnp.ExternalIp != null && inviteLogged != upnp.ExternalIp)
+			{
+				inviteLogged = upnp.ExternalIp;
+				Logger.LogInfo($"Invite link for Steam friends: steam://run/615120//+connect%20{upnp.ExternalIp}:{port.Value}");
+			}
 			return upnp.ExternalIp != null ? "Friends join: " + upnp.ExternalIp + (port.Value != 27777 ? ":" + port.Value : "") : upnp.Status;
 		}
 

@@ -12,7 +12,7 @@ namespace CompoundMP
 	{
 		public static string HostMap = "";   // last level the host announced
 		static string pending;                // level the host moved to that this client still has to reach
-		static float pendingSince, lastToast, forceAt;
+		static float pendingSince, lastToast;
 		static bool started;
 		public static string Pending => pending;
 		static bool Follows(string map) => map != null && map.StartsWith("map"); // runs and HQ; not practice/tutorial areas
@@ -50,7 +50,7 @@ namespace CompoundMP
 			var g = Singleton<GlobalGameInfo>.Instance;
 			if (g == null || g.GameControllerInstance == null) return;
 			if (g.CurrentMapName == pending) { if (g.Map != null || Time.unscaledTime - pendingSince > 30f) pending = null; return; }
-			if (!started && Time.unscaledTime >= forceAt)
+			if (!started)
 			{
 				var trig = Object.FindObjectsOfType<NextLevelTrigger>().OrderBy(t => t.NextMapName == pending ? 0 : t.NextMapName == "" ? 1 : 2).FirstOrDefault();
 				if (trig != null && !g.GameControllerInstance.MapFaderController.IsFading)
