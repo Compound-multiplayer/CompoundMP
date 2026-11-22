@@ -17,6 +17,7 @@ concurrency:
 env:
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1'  # nothing here needs ICU, so runners without libicu work too
   BEPINEX_VERSION: 5.4.23.3
   BEPINEX_SHA256: 41a089e5b1b1f0713b331346baf6677b1184c69eabebf51101097954e854c749
 
