@@ -190,6 +190,53 @@ Check(Wait(host, out _) != null, "host survives junk packet");
 	c2.DropFilter = null;
 }
 
+// ---- authentication: tagged packets, wrong keys and forgeries are dropped ----
+{
+	byte[] pw = Auth.PasswordKey("s3cret"), bad = Auth.PasswordKey("wrong");
+	Check(Auth.Equal(Auth.HelloProof(pw, "a", new byte[16]), Auth.HelloProof(pw, "a", new byte[16])), "hello proof is deterministic");
+	Check(!Auth.Equal(Auth.HelloProof(pw, "a", new byte[16]), Auth.HelloProof(bad, "a", new byte[16])), "wrong password gives a different proof");
+	var cn = Auth.Nonce(); var hn = Auth.Nonce();
+	Check(!Auth.Equal(Auth.SessionKey(pw, cn, hn), Auth.SessionKey(pw, Auth.Nonce(), hn)), "session key depends on the nonces");
+
+	var ah = new Transport(true, 0, true);
+	var ac = new Transport(false, 0, true);
+	var hostEp = new IPEndPoint(IPAddress.Loopback, ah.LocalPort);
+	ac.HostEp = hostEp;
+	var clientEp = new IPEndPoint(IPAddress.Loopback, ac.LocalPort);
+	var sk = Auth.SessionKey(pw, cn, hn);
+	ah.SetKey(clientEp, sk); ac.SetKey(hostEp, sk);
+
+	ac.SendTo(hostEp, Proto.State, w => w.Write("hello"));
+	var got1 = Wait(ah, out _);
+	Check(got1 != null && got1[0] == Proto.State && new BinaryReader(new MemoryStream(got1, 1, got1.Length - 1)).ReadString() == "hello", "tagged packet is accepted and the tag stripped");
+
+	// a forged packet with no tag, and one with a bad tag
+	var raw = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+	var forged = Transport.Build(Proto.PlayerDamage, w => { w.Write(1u); w.Write(5); });
+	raw.Send(forged, forged.Length, hostEp);
+	Check(Wait(ah, out _, 400) == null, "untagged packet from an unknown sender is dropped");
+	// same sender endpoint but a tag made with the wrong key: use the client's own socket via a second transport key
+	var ac2 = new Transport(false, 0, true); ac2.HostEp = hostEp;
+	var ep2 = new IPEndPoint(IPAddress.Loopback, ac2.LocalPort);
+	ac2.SetKey(hostEp, Auth.SessionKey(bad, cn, hn)); ah.SetKey(ep2, sk);
+	ac2.SendTo(hostEp, Proto.State, w => w.Write("x"));
+	Check(Wait(ah, out _, 400) == null, "packet tagged with the wrong key is dropped");
+	Check(ah.RejectedPackets >= 2, $"rejected packets are counted ({ah.RejectedPackets})");
+
+	// handshake packets are the one exception: they pass without a tag
+	var hello = Transport.Build(Proto.Hello, w => w.Write("x"));
+	raw.Send(hello, hello.Length, hostEp);
+	Check(Wait(ah, out _, 500) != null, "handshake packets are not tagged");
+
+	// traffic counters
+	Check(ah.RecvPackets[Proto.State] >= 1 && ac.SentBytes[Proto.State] > 0, "per-type traffic counters");
+	// simulated loss drops everything at 100 %
+	ac.SimulatedLossPercent = 100;
+	ac.SendTo(hostEp, Proto.State, w => w.Write("lost"));
+	Check(Wait(ah, out _, 300) == null, "simulated loss drops packets");
+	ah.Close(); ac.Close(); ac2.Close(); raw.Close();
+}
+
 host.Close(); c1.Close(); c2.Close();
 Console.WriteLine(fails == 0 ? "ALL PASSED" : fails + " FAILED");
 return fails;

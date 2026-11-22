@@ -7,7 +7,11 @@ namespace CompoundMP
 	// Wire format. Kept free of UnityEngine so it can be tested outside the game.
 	public static class Proto
 	{
-		public const byte Hello = 1, Seed = 2, State = 3, Bye = 4, Enemies = 5, EnemyDamage = 6, PlayerDamage = 7, Projectile = 8, Trail = 9, Ack = 10, Welcome = 11, Reject = 12;
+		public const byte Hello = 1, Seed = 2, State = 3, Bye = 4, Enemies = 5, EnemyDamage = 6, PlayerDamage = 7, Projectile = 8, Trail = 9, Ack = 10, Welcome = 11, Reject = 12, Effect = 13, LevelChange = 14;
+		// Bumped whenever the handshake or packet layout changes; a host rejects a different version.
+		public const byte Version = 2;
+		// Handshake packets are the only ones sent before a session key exists, so they are never tagged.
+		public static bool IsHandshake(byte type) => type == Hello || type == Welcome || type == Reject;
 		public const int EnemiesPerPacket = 40;
 
 		public struct EnemyRec
@@ -43,6 +47,61 @@ namespace CompoundMP
 		}
 	}
 
+	// Password-based mutual authentication and per-packet tags. The password never crosses the wire: both sides prove they
+	// know it with an HMAC over fresh nonces, then derive a session key that tags every later packet (HMAC-SHA256,
+	// truncated to 16 bytes). Authentication only: poses and damage are not secret, but nobody may inject or alter them.
+	public static class Auth
+	{
+		public const int NonceLen = 16, TagLen = 16;
+
+		public static byte[] PasswordKey(string password)
+		{
+			using (var kdf = new System.Security.Cryptography.Rfc2898DeriveBytes(password, System.Text.Encoding.UTF8.GetBytes("compoundmp.v2"), 5000))
+				return kdf.GetBytes(32);
+		}
+
+		public static byte[] Nonce()
+		{
+			var n = new byte[NonceLen];
+			using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create()) rng.GetBytes(n);
+			return n;
+		}
+
+		public static byte[] Hmac(byte[] key, params byte[][] parts)
+		{
+			using (var h = new System.Security.Cryptography.HMACSHA256(key))
+			{
+				var ms = new MemoryStream();
+				foreach (var p in parts) ms.Write(p, 0, p.Length);
+				return h.ComputeHash(ms.ToArray());
+			}
+		}
+
+		static byte[] Utf8(string s) => System.Text.Encoding.UTF8.GetBytes(s);
+
+		public static byte[] HelloProof(byte[] pwKey, string id, byte[] clientNonce) => Hmac(pwKey, Utf8("hello"), Utf8(id), clientNonce);
+		public static byte[] WelcomeProof(byte[] pwKey, byte[] clientNonce, byte[] hostNonce) => Hmac(pwKey, Utf8("welcome"), clientNonce, hostNonce);
+		public static byte[] SessionKey(byte[] pwKey, byte[] clientNonce, byte[] hostNonce) => Hmac(pwKey, Utf8("session"), clientNonce, hostNonce);
+
+		public static byte[] Tag(byte[] key, byte[] data, int length)
+		{
+			var buf = new byte[length];
+			Array.Copy(data, buf, length);
+			var full = Hmac(key, buf);
+			var tag = new byte[TagLen];
+			Array.Copy(full, tag, TagLen);
+			return tag;
+		}
+
+		public static bool Equal(byte[] a, byte[] b)
+		{
+			if (a == null || b == null || a.Length != b.Length) return false;
+			int diff = 0;
+			for (int i = 0; i < a.Length; i++) diff |= a[i] ^ b[i];
+			return diff == 0;
+		}
+	}
+
 	// UDP transport: one host, many clients. Packets are [type byte][body].
 	public class Transport
 	{
@@ -57,9 +116,24 @@ namespace CompoundMP
 		public System.Net.IPEndPoint HostEp;
 		public int LocalPort => ((System.Net.IPEndPoint)udp.Client.LocalEndPoint).Port;
 
-		public Transport(bool host, int port)
+		// With AuthEnabled every packet except the handshake carries a 16-byte tag made with the peer's session key; packets
+		// with a missing or wrong tag are dropped by the receive thread and counted in RejectedPackets.
+		public readonly bool AuthEnabled;
+		readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> keys = new System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>();
+		public long RejectedPackets;
+		public void SetKey(System.Net.IPEndPoint ep, byte[] key) => keys[ep.ToString()] = key;
+		public void RemoveKey(System.Net.IPEndPoint ep) { keys.TryRemove(ep.ToString(), out _); }
+
+		// Traffic counters per packet type (index = type byte), read by the status line.
+		public readonly long[] SentBytes = new long[256], RecvBytes = new long[256], SentPackets = new long[256], RecvPackets = new long[256];
+		// Test hook: percentage (0-100) of outgoing packets to drop, to see how the game behaves on a lossy link.
+		public int SimulatedLossPercent;
+		readonly Random lossRng = new Random();
+
+		public Transport(bool host, int port, bool auth = false)
 		{
 			IsHost = host;
+			AuthEnabled = auth;
 			udp = new System.Net.Sockets.UdpClient(host ? port : 0);
 			udp.Client.ReceiveTimeout = 200; // lets the rx thread notice shutdown without Close() blocking on Receive
 			rx = new System.Threading.Thread(RxLoop) { IsBackground = true };
@@ -73,8 +147,20 @@ namespace CompoundMP
 				try
 				{
 					var from = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
-					byte[] data = udp.Receive(ref from);
-					if (data.Length > 0) inbox.Enqueue(new KeyValuePair<System.Net.IPEndPoint, byte[]>(from, data));
+						byte[] data = udp.Receive(ref from);
+						if (data.Length == 0) continue;
+						if (AuthEnabled && !Proto.IsHandshake(data[0]))
+						{
+							if (data.Length <= Auth.TagLen || !keys.TryGetValue(from.ToString(), out var key)) { System.Threading.Interlocked.Increment(ref RejectedPackets); continue; }
+							int bodyLen = data.Length - Auth.TagLen;
+							var expect = Auth.Tag(key, data, bodyLen);
+							var got = new byte[Auth.TagLen];
+							Array.Copy(data, bodyLen, got, 0, Auth.TagLen);
+							if (!Auth.Equal(expect, got)) { System.Threading.Interlocked.Increment(ref RejectedPackets); continue; }
+							Array.Resize(ref data, bodyLen);
+						}
+						RecvBytes[data[0]] += data.Length; RecvPackets[data[0]]++;
+						inbox.Enqueue(new KeyValuePair<System.Net.IPEndPoint, byte[]>(from, data));
 				}
 				catch (System.Net.Sockets.SocketException) { } // timeout, or ICMP port unreachable on Windows
 				catch (ObjectDisposedException) { break; }
@@ -102,7 +188,18 @@ namespace CompoundMP
 
 		public void SendRaw(System.Net.IPEndPoint ep, byte[] b)
 		{
-			if (!running || ep == null || (DropFilter != null && DropFilter(b))) return;
+			if (!running || ep == null || b.Length == 0 || (DropFilter != null && DropFilter(b))) return;
+			if (SimulatedLossPercent > 0 && lossRng.Next(100) < SimulatedLossPercent) return;
+			SentBytes[b[0]] += b.Length; SentPackets[b[0]]++;
+			if (AuthEnabled && !Proto.IsHandshake(b[0]))
+			{
+				if (!keys.TryGetValue(ep.ToString(), out var key)) return; // no session with that peer yet
+				var tag = Auth.Tag(key, b, b.Length);
+				var signed = new byte[b.Length + Auth.TagLen];
+				Array.Copy(b, signed, b.Length);
+				Array.Copy(tag, 0, signed, b.Length, Auth.TagLen);
+				b = signed;
+			}
 			try { udp.Send(b, b.Length, ep); } catch (ObjectDisposedException) { }
 		}
 

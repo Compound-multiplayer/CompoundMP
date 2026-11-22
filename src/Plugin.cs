@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace CompoundMP
 {
-	[BepInPlugin("com.compoundmp.coop", "COMPOUND Multiplayer", "0.3.0")]
+	[BepInPlugin("com.compoundmp.coop", "COMPOUND Multiplayer", "0.4.0")]
 	public class Plugin : BaseUnityPlugin
 	{
 		const float SendInterval = 1f / 20f;
@@ -27,6 +27,7 @@ namespace CompoundMP
 		ConfigEntry<int> port;
 		ConfigEntry<string> autoStart, debugLoadMap;
 		ConfigEntry<bool> debugCombat, debugDumpMenu;
+		ConfigEntry<int> simLoss;
 		ConfigEntry<string> shotDir;
 		bool menuDumped;
 		string autoStartMode = ""; bool mapLoadRequested, trailTested; int lastProbe = -1, lastPlace = -1, lastAware = -1; Vector3? fakeHead; float combatClock = -1f; int combatStep;
@@ -61,6 +62,7 @@ namespace CompoundMP
 			debugLoadMap = Config.Bind("Debug", "LoadMap", "", "Scene to load a few seconds after launch (headless testing)");
 			shotDir = Config.Bind("Debug", "ScreenshotDir", "", "Save PNG screenshots here (development; needs graphics)");
 			Shot.Dir = shotDir.Value;
+			simLoss = Config.Bind("Debug", "SimulatedLossPercent", 0, "Drop this percentage of outgoing packets (testing how the game copes with a lossy network)");
 			debugDumpMenu = Config.Bind("Debug", "DumpMenu", false, "Log the game's VR menu hierarchy (development)");
 			debugCombat = Config.Bind("Debug", "Combat", false, "Run a scripted enemy/damage sync check once enemies exist (headless testing)");
 			autoStartMode = autoStart.Value;
@@ -110,15 +112,37 @@ namespace CompoundMP
 			if (statusTimer >= 5f)
 			{
 				statusTimer = 0f;
-				Logger.LogInfo($"[status] {(net.IsHost ? "host" : "client")} peers={(net.IsHost ? net.Clients.Count : Avatars.Count)} avatars={Avatars.Count} seed={(HasHostSeed ? HostSeed.ToString() : "-")} {(upnp != null ? upnp.Status + " " : "")}{ProjectileSync.Stats()} map={EnemySync.MapName} {enemies.Summary()}");
+				Logger.LogInfo($"[status] {(net.IsHost ? "host" : "client")} peers={(net.IsHost ? net.Clients.Count : Avatars.Count)} avatars={Avatars.Count} seed={(HasHostSeed ? HostSeed.ToString() : "-")} {(upnp != null ? upnp.Status + " " : "")}{ProjectileSync.Stats()} {NetRates(5f)} map={EnemySync.MapName} {enemies.Summary()}");
 			}
 		}
 
 		void OnDestroy() => Stop();
 
+		// Throughput since the previous call, total and for the busiest packet types, e.g. "tx=2.1kB/s rx=1.4kB/s [Enemies 1.1 State 0.8]".
+		readonly long[] prevSent = new long[256], prevRecv = new long[256];
+		static readonly string[] TypeNames = { "", "Hello", "Seed", "State", "Bye", "Enemies", "EnemyDamage", "PlayerDamage", "Projectile", "Trail", "Ack", "Welcome", "Reject", "Effect", "LevelChange" };
+		string NetRates(float seconds)
+		{
+			long tx = 0, rx = 0;
+			var per = new List<KeyValuePair<string, double>>();
+			for (int t = 1; t < TypeNames.Length; t++)
+			{
+				long ds = net.SentBytes[t] - prevSent[t], dr = net.RecvBytes[t] - prevRecv[t];
+				prevSent[t] = net.SentBytes[t]; prevRecv[t] = net.RecvBytes[t];
+				tx += ds; rx += dr;
+				if (ds + dr > 0) per.Add(new KeyValuePair<string, double>(TypeNames[t], (ds + dr) / 1024.0 / seconds));
+			}
+			per.Sort((a, b) => b.Value.CompareTo(a.Value));
+			var top = new List<string>();
+			for (int i = 0; i < per.Count && i < 4; i++) top.Add($"{per[i].Key} {per[i].Value:0.0}");
+			return $"tx={tx / 1024.0 / seconds:0.0}kB/s rx={rx / 1024.0 / seconds:0.0}kB/s [{string.Join(" ", top.ToArray())}] rejected={net.RejectedPackets}";
+		}
+
 		// Connection upkeep: the client keeps asking to join until the host answers; each side drops a peer that went silent.
 		const float HelloRetry = 1f, HelloGiveUp = 15f, PeerTimeout = 10f, HostTimeout = 15f;
-		bool welcomed; int helloTries; float helloTimer, lastHostRx;
+bool welcomed; int helloTries; float helloTimer, lastHostRx;
+		byte[] pwKey, clientNonce;
+		readonly Dictionary<string, KeyValuePair<byte[], byte[]>> sessions = new Dictionary<string, KeyValuePair<byte[], byte[]>>(); // client id -> (client nonce, host nonce)
 		readonly Dictionary<string, float> lastSeen = new Dictionary<string, float>();
 
 		void Watchdog()
@@ -131,7 +155,7 @@ namespace CompoundMP
 				if (gone != null)
 					foreach (var id in gone)
 					{
-						lastSeen.Remove(id); net.Clients.Remove(id);
+						lastSeen.Remove(id); sessions.Remove(id); if (net.Clients.TryGetValue(id, out var gone2)) net.RemoveKey(gone2); net.Clients.Remove(id);
 						if (Avatars.TryGetValue(id, out var av)) { av.Destroy(); Avatars.Remove(id); }
 						Logger.LogInfo("Client timed out: " + id); Toast("A player lost connection");
 					}
@@ -238,7 +262,8 @@ namespace CompoundMP
 			menuNote = "";
 			try
 			{
-				net = new Transport(true, port.Value);
+pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
+				net = new Transport(true, port.Value, pwKey != null) { SimulatedLossPercent = simLoss.Value };
 				Logger.LogInfo("Hosting on UDP " + port.Value);
 				Toast("Hosting co-op on port " + port.Value);
 				if (useUpnp.Value)
@@ -261,7 +286,9 @@ namespace CompoundMP
 				int hostPort = port.Value, colon = target.LastIndexOf(':');
 				if (colon > 0 && int.TryParse(target.Substring(colon + 1), out int parsed)) { hostPort = parsed; target = target.Substring(0, colon); }
 				var addr = ResolveHost(target);
-				net = new Transport(false, 0);
+pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
+				clientNonce = Auth.Nonce();
+				net = new Transport(false, 0, pwKey != null) { SimulatedLossPercent = simLoss.Value };
 				net.HostEp = new IPEndPoint(addr, hostPort);
 				welcomed = false; helloTries = 1; helloTimer = 0f; lastHostRx = Time.unscaledTime;
 				SendHello();
@@ -271,7 +298,14 @@ namespace CompoundMP
 			catch (Exception e) { Logger.LogError(e); menuNote = "Could not join: " + e.Message; Toast(menuNote); net?.Close(); net = null; }
 		}
 
-		void SendHello() => net.SendTo(net.HostEp, Proto.Hello, w => { w.Write(MyId); w.Write(password.Value); });
+		void SendHello() => net.SendTo(net.HostEp, Proto.Hello, w =>
+		{
+			w.Write(Proto.Version);
+			w.Write(MyId);
+			w.Write(clientNonce);
+			w.Write(pwKey != null);
+			if (pwKey != null) w.Write(Auth.HelloProof(pwKey, MyId, clientNonce));
+		});
 
 		// Accepts a dotted IP or a hostname (e.g. a dynamic-DNS name).
 		static IPAddress ResolveHost(string host)
@@ -291,6 +325,7 @@ namespace CompoundMP
 			net.Close();
 			net = null;
 			lastSeen.Clear();
+			sessions.Clear();
 			HasHostSeed = false;
 			foreach (var a in Avatars.Values) a.Destroy();
 			Avatars.Clear();
@@ -317,25 +352,58 @@ namespace CompoundMP
 				{
 					case Proto.Hello when host:
 						{
-							string id = r.ReadString();
-							string pw = r.ReadString();
-							if (password.Value != "" && pw != password.Value)
+							byte ver = r.ReadByte();
+							if (ver != Proto.Version)
 							{
-								Logger.LogWarning("Rejected " + from + ": wrong password");
-								net.SendTo(from, Proto.Reject, w => w.Write("Wrong password"));
+								net.SendTo(from, Proto.Reject, w => w.Write("Version mismatch: host speaks protocol " + Proto.Version + ", you speak " + ver));
 								break;
 							}
+							string id = r.ReadString();
+							byte[] cn = r.ReadBytes(Auth.NonceLen);
+							bool hasPw = r.ReadBoolean();
+							byte[] proof = hasPw ? r.ReadBytes(32) : null;
+							if (pwKey != null)
+							{
+								if (!hasPw) { net.SendTo(from, Proto.Reject, w => w.Write("This host needs a password")); break; }
+								if (!Auth.Equal(proof, Auth.HelloProof(pwKey, id, cn)))
+								{
+									Logger.LogWarning("Rejected " + from + ": wrong password");
+									net.SendTo(from, Proto.Reject, w => w.Write("Wrong password"));
+									break;
+								}
+							}
+							// A repeated Hello (same client nonce) gets the same host nonce, so a late duplicate cannot change a live session key.
+							byte[] hn;
+							if (sessions.TryGetValue(id, out var sess) && Auth.Equal(sess.Key, cn)) hn = sess.Value;
+							else { hn = Auth.Nonce(); sessions[id] = new KeyValuePair<byte[], byte[]>(cn, hn); }
 							bool isNew = !net.Clients.ContainsKey(id);
 							net.Clients[id] = from;
 							lastSeen[id] = Time.unscaledTime;
 							if (isNew) { Logger.LogInfo("Client joined: " + id); Toast("Player joined"); }
-							net.SendTo(from, Proto.Welcome, w => { });
+							net.SendTo(from, Proto.Welcome, w =>
+							{
+								w.Write(pwKey != null);
+								if (pwKey != null) { w.Write(hn); w.Write(Auth.WelcomeProof(pwKey, cn, hn)); }
+							});
+							if (pwKey != null) net.SetKey(from, Auth.SessionKey(pwKey, cn, hn)); // everything after Welcome is tagged
 							SendSeed(from); // repeated Hellos re-send it, which is harmless
 							break;
 						}
 					case Proto.Welcome when !host:
-						welcomed = true;
-						break;
+						{
+							bool authRequired = r.ReadBoolean();
+							if (pwKey != null && !authRequired) { Fail("Host is not password protected; refusing to join without authentication"); break; }
+							if (pwKey == null && authRequired) { Fail("This host needs a password (set Password in the config)"); break; }
+							if (authRequired)
+							{
+								byte[] hn = r.ReadBytes(Auth.NonceLen);
+								byte[] proof = r.ReadBytes(32);
+								if (!Auth.Equal(proof, Auth.WelcomeProof(pwKey, clientNonce, hn))) { Fail("The host failed to prove it knows the password"); break; }
+								net.SetKey(net.HostEp, Auth.SessionKey(pwKey, clientNonce, hn));
+							}
+							welcomed = true;
+							break;
+						}
 					case Proto.Reject when !host:
 						Fail("Host refused the connection: " + r.ReadString());
 						break;
@@ -364,9 +432,12 @@ namespace CompoundMP
 					case Proto.Bye:
 						{
 							string id = r.ReadString();
+							if (!host && from.Equals(net.HostEp)) { Fail("The host left the game"); break; }
 							if (Avatars.TryGetValue(id, out var av)) { av.Destroy(); Avatars.Remove(id); }
+							if (net.Clients.TryGetValue(id, out var byeEp)) net.RemoveKey(byeEp);
 							net.Clients.Remove(id);
 							lastSeen.Remove(id);
+							sessions.Remove(id);
 							break;
 						}
 					case Proto.Enemies when !host:
