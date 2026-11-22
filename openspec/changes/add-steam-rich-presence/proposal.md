@@ -1,11 +1,11 @@
 # Change: Add steam rich presence
 
 ## Why
-`+connect` links work (see `add-steam-connect-link`) but the friends list button needs rich presence, which the mod cannot publish: the game ships Steamworks.NET without the friends API.
+The mod already publishes the host's address as Steam rich presence (`connect`) while hosting and handles `GameRichPresenceJoinRequested` while running, through the game's own Steamworks.NET (`SteamJoin.cs`); a game started from the button receives `+connect` (see `add-steam-connect-link`). None of this could be exercised here: Steam is not running under the test setup, so `SteamManager.Initialized` is false and the calls are skipped.
 
 ## What Changes
-- Publish the host's join information through Steam rich presence (`connect`).
-- Handle the join request when the game is already running.
+- Test with two Steam accounts on Windows: the host sees `Steam rich presence connect=...` in the log, the friend sees Join Game, and pressing it joins (game not running and game running).
+- Fix whatever that shows (for example which address to publish when UPnP and NAT-PMP both fail).
 
 ## Impact
 - Affected specs: `steam-rich-presence`

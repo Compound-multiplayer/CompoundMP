@@ -5,7 +5,7 @@ A player SHALL be able to join a friend's hosted session from the Steam friends 
 
 #### Scenario: Join Game
 - **WHEN** a friend is hosting and has published rich presence
-- **THEN** choosing Join Game connects to that session
+- **THEN** choosing Join Game connects to that session, whether or not the game is already running
 
 ### Requirement: Direct joining stays available
 Typed addresses, LAN discovery and +connect links SHALL keep working.

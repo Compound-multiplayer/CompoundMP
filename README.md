@@ -56,8 +56,7 @@ or inject damage. Without a password the session is open. Traffic is authenticat
 
 Known limits (open proposals in `openspec/changes/`):
 - nothing has been tested with a real VR headset (`verify-in-headset`)
-- no real in-game screenshots yet: the emulated renderer here returns black frames (`add-gpu-screenshot-capture`)
-- Steam's friends-list "Join Game" button needs rich presence, which the game's Steamworks build cannot publish (`add-steam-rich-presence`)
+- the Steam friends-list "Join Game" button is implemented but could not be tried without a running Steam client (`add-steam-rich-presence`)
 
 ## Verification
 
@@ -75,17 +74,30 @@ In the real game:
 - wrong password rejected; killed client timed out by the host; killed host noticed by the clients
 - UPnP and NAT-PMP mapped and removed a port on the development router (UPnP is also tested against a fake router)
 - the wrist menu: every control, including all keyboard keys, is found by the same overlap test the hand uses; the keypad, keyboard
-  (SHIFT, masked password), recent hosts and LAN host list all work through the real menu code
+  (SHIFT, masked password), recent hosts and LAN host list all work through the real menu code; the hand's own `MenuSelector` was moved
+  onto keys with a simulated trigger and typed `7 2 . 1 DEL 9` correctly (the real selection path, minus a physical controller)
 - a second instance on the real network listed the host through LAN discovery
 - measured host upload with five clients in combat: about 54 kB/s (0.44 Mbit/s); State dominates (45 kB/s), then Enemies (17 kB/s)
 
-Not verified: real headsets and controllers (poking, text size, avatar scale), gameplay on a real internet connection with several
-distinct machines, the Steam friends-list button, and the GitHub Actions run itself (the workflow passes `actionlint` and its commands
-were run locally).
+The CI workflow was run for real in Linux containers with `act` (jobs `commits`, `test` and `compile` succeeded; the `build` and `release`
+jobs need the `GAME_ASSEMBLIES_URL` secret and a tag, so they were not run).
 
-Screenshots: `previews/*.svg` are layout drawings made from the menu's real positions and strings, not game captures. Under CrossOver
-`-force-d3d11-warp` gives a Direct3D device but every rendered frame is black; `Shot.cs` plus the `DumpMenu` and `ScreenshotDir` debug
-options save real PNGs on a machine where the game renders.
+Not verified: a physical headset and controllers (finger accuracy, text size, avatar scale), gameplay on a real internet connection with
+several distinct machines, the Steam friends-list button (no Steam client in the test setup), and a run on github.com itself.
+
+## Screenshots
+
+Captured from the running game (headless-capable test setup, `-force-d3d11-warp` under CrossOver):
+
+| | |
+|---|---|
+| ![Wrist menu with the CO-OP MULTIPLAYER line](docs/screenshots/menu_1_main.png) | ![Co-op page while hosting](docs/screenshots/menu_3_hosting.png) |
+| ![FIND GAMES page](docs/screenshots/menu_4_find_games.png) | ![Keyboard page](docs/screenshots/menu_5_keyboard.png) |
+| ![Fight seen from the host: the other player's avatar in front of the enemy](docs/screenshots/multiplayer_host_view.png) | ![The same fight from a client: replicated bullets flying at the camera](docs/screenshots/multiplayer_client_view.png) |
+
+Left-to-right, top-to-bottom: the wrist menu with the new line; the co-op page while hosting; the host list; the keyboard; the host's view
+(the avatar of the other player, a cube head and two hands, stands in front of the enemy); a client's view of the same fight.
+`Shot.cs` with the `DumpMenu`, `MultiplayerShot` and `ScreenshotDir` debug options produces them.
 
 ## Building
 
@@ -98,8 +110,8 @@ options save real PNGs on a machine where the game renders.
 
 ## Repository layout
 
-- `src/` plugin sources; `tests/` unit tests; `ci/` stub assembly and build script; `previews/` menu layout drawings
-- `openspec/` specs: current requirements (`specs/`), 23 archived completed changes (`changes/archive/`) and the open proposals (`changes/`)
+- `src/` plugin sources; `tests/` unit tests; `ci/` stub assemblies and build script; `docs/screenshots/` game screenshots
+- `openspec/` specs: current requirements (`specs/`), 25 archived completed changes (`changes/archive/`) and the open proposals (`changes/`: a headset playtest and a Steam test)
 - `.github/workflows/ci.yml`: conventional-commit check on pull requests; unit tests; compile against stubs; a build with the real game
   assemblies when the repository secret `GAME_ASSEMBLIES_URL` (a private download of a zip containing `COMPOUND_Data/Managed/*.dll`) is set;
   a release when a `v*` tag is pushed. The game's assemblies are copyrighted and never committed.

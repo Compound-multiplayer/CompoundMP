@@ -8,8 +8,7 @@ Specs for the co-op mod, in the [OpenSpec](https://github.com/Fission-AI/OpenSpe
 
 ## Open proposals
 - `verify-in-headset`: Record what has to be checked with real VR hardware, because every test so far ran headless.
-- `add-gpu-screenshot-capture`: Capture real screenshots of the menu and a multiplayer view.
-- `add-steam-rich-presence`: Join a friend with the "Join Game" button in the Steam friends list.
+- `add-steam-rich-presence`: Confirm the Steam friends-list "Join Game" button works end to end.
 
 ## Archived
 - `2026-11-22-add-udp-session-transport`: Plain UDP transport between one host and many clients, carrying small typed packets.
@@ -35,3 +34,5 @@ Specs for the co-op mod, in the [OpenSpec](https://github.com/Fission-AI/OpenSpe
 - `2026-11-22-add-run-notices`: Tell players what happens to the others, and end the session cleanly when the host leaves.
 - `2026-11-22-add-steam-connect-link`: Join a friend from a Steam link instead of typing an address.
 - `2026-11-22-add-reference-stubs-for-ci`: Compile the plugin in CI without the game's copyrighted assemblies.
+- `2026-11-22-add-real-screenshots`: Capture real screenshots of the wrist menu and of a multiplayer fight, from the running game.
+- `2026-11-22-add-hand-poke-test`: Exercise the real hand-selection path without a headset.

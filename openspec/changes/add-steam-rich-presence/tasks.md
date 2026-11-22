@@ -1,5 +1,4 @@
 ## 1. Implementation
-- [ ] Spike: resolve the flat-API accessor for the installed Steam client
-- [ ] Publish rich presence while hosting
-- [ ] Handle the join request while running
-- [ ] Two-account test on Windows
+- [ ] Two-account test with the game not running
+- [ ] Two-account test with the game already running
+- [ ] Fix findings and archive this change
