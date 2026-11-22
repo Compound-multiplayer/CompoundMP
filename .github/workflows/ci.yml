@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
       # Loopback UDP transport, reliable delivery and UPnP against a fake router. No game files needed.
@@ -65,7 +65,7 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
       # BepInEx and the Unity reference assemblies are public downloads (checksummed); ci/stubs stands in for the game's
