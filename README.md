@@ -79,8 +79,8 @@ In the real game:
 - a second instance on the real network listed the host through LAN discovery
 - measured host upload with five clients in combat: about 54 kB/s (0.44 Mbit/s); State dominates (45 kB/s), then Enemies (17 kB/s)
 
-The CI workflow was run for real in Linux containers with `act` (jobs `commits`, `test` and `compile` succeeded; the `build` and `release`
-jobs need the `GAME_ASSEMBLIES_URL` secret and a tag, so they were not run).
+The CI workflow was run for real in Linux containers with `act` (jobs `commits`, `test` and `compile` succeeded; the `release`
+job needs a tag, so it was not run). CI needs no game files.
 
 Not verified: a physical headset and controllers (finger accuracy, text size, avatar scale), gameplay on a real internet connection with
 several distinct machines, the Steam friends-list button (no Steam client in the test setup), and a run on github.com itself.
@@ -112,9 +112,7 @@ Left-to-right, top-to-bottom: the wrist menu with the new line; the co-op page w
 
 - `src/` plugin sources; `tests/` unit tests; `ci/` stub assemblies and build script; `docs/screenshots/` game screenshots
 - `openspec/` specs: current requirements (`specs/`), 25 archived completed changes (`changes/archive/`) and the open proposals (`changes/`: a headset playtest and a Steam test)
-- `.github/workflows/ci.yml`: conventional-commit check on pull requests; unit tests; compile against stubs; a build with the real game
-  assemblies when the repository secret `GAME_ASSEMBLIES_URL` (a private download of a zip containing `COMPOUND_Data/Managed/*.dll`) is set;
-  a release when a `v*` tag is pushed. The game's assemblies are copyrighted and never committed.
+- `.github/workflows/ci.yml`: conventional-commit check on pull requests; unit tests; compile against stubs; a release when a `v*` tag is pushed. The game's assemblies are copyrighted and never committed.
 - Commits follow Conventional Commits.
 
 Test setup only (not needed to play): CrossOver https://www.codeweavers.com/crossover on macOS with the bottle override

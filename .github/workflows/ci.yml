@@ -72,49 +72,11 @@ jobs:
       # Assembly-CSharp. This proves every push (and fork PR) still compiles without any game files.
       - name: Build against stubs
         run: ./ci/build-with-stubs.sh
-
-  build:
-    name: Build plugin with the game assemblies
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: compile
-    outputs:
-      built: ${{ steps.game.outputs.available }}
-    env:
-      # Private download (zip containing COMPOUND_Data/Managed/*.dll). The game's assemblies are copyrighted and must
-      # not be committed, so the plugin only builds here when this secret is configured.
-      GAME_ASSEMBLIES_URL: ${{ secrets.GAME_ASSEMBLIES_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - name: Check for game assemblies
-        id: game
-        run: |
-          if [ -n "$GAME_ASSEMBLIES_URL" ]; then echo "available=true" >> "$GITHUB_OUTPUT"
-          else echo "::notice::GAME_ASSEMBLIES_URL is not set; skipping the plugin build (tests above still ran)."; echo "available=false" >> "$GITHUB_OUTPUT"; fi
-      - name: Fetch BepInEx and game assemblies
-        if: steps.game.outputs.available == 'true'
-        run: |
-          mkdir -p game
-          curl -fsSL -o bepinex.zip "https://github.com/BepInEx/BepInEx/releases/download/v${BEPINEX_VERSION}/BepInEx_win_x64_${BEPINEX_VERSION}.zip"
-          echo "${BEPINEX_SHA256}  bepinex.zip" | sha256sum -c -
-          unzip -q bepinex.zip -d game
-          curl -fsSL -o assemblies.zip "$GAME_ASSEMBLIES_URL"
-          unzip -q assemblies.zip -d game
-          test -f game/COMPOUND_Data/Managed/Assembly-CSharp.dll
-      - name: Build
-        if: steps.game.outputs.available == 'true'
-        run: dotnet build src -c Release -p:GameDir="$PWD/game"
       - name: Package
-        if: steps.game.outputs.available == 'true'
         run: |
           mkdir -p dist
-          cp src/bin/Release/net472/CompoundMP.dll dist/
-          cp README.md dist/
+          cp ci/.out/CompoundMP.dll README.md dist/
       - uses: actions/upload-artifact@v4
-        if: steps.game.outputs.available == 'true'
         with:
           name: CompoundMP
           path: dist/
@@ -122,8 +84,8 @@ jobs:
 
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.built == 'true'
-    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: compile
     runs-on: ubuntu-latest
     permissions:
       contents: write

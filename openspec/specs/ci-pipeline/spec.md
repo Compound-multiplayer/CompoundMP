@@ -19,18 +19,18 @@ A pull request SHALL fail if any commit subject is not a conventional commit.
 - **WHEN** a PR commit is titled "Fix stuff"
 - **THEN** the commits job fails and names it
 
-### Requirement: Plugin build needs game files
-The plugin SHALL be built in CI only when the game assemblies are provided through a secret, and the workflow SHALL say so when it skips the build.
+### Requirement: CI needs no game files
+The pipeline SHALL NOT require the game or its copyrighted assemblies; the plugin SHALL be compiled against signature stubs and public reference assemblies.
 
-#### Scenario: No secret
-- **WHEN** GAME_ASSEMBLIES_URL is not set
-- **THEN** the build is skipped with a notice and the pipeline still passes
+#### Scenario: Fork pull request
+- **WHEN** a pull request comes from a fork with no secrets
+- **THEN** tests and the stub compile still run and pass
 
 ### Requirement: Releases from tags
 A tag `v*` SHALL publish a release containing the built DLL and README.
 
 #### Scenario: Tag
-- **WHEN** tag v0.3.0 is pushed and the build succeeded
+- **WHEN** tag v0.3.0 is pushed and the stub compile succeeded
 - **THEN** a release with CompoundMP.dll is created
 
 ### Requirement: Plugin always compiles in CI
