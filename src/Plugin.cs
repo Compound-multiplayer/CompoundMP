@@ -23,11 +23,15 @@ namespace CompoundMP
 		ConfigEntry<bool> useUpnp;
 		Upnp upnp;
 		string menuNote = "";
-		ConfigEntry<string> joinAddress, password;
+		ConfigEntry<string> joinAddress, password, hostName, recentHosts;
+		ConfigEntry<bool> lanOn;
+		LanDiscovery.Announcer lanAnnouncer; LanDiscovery.Listener lanListener;
 		ConfigEntry<int> port;
 		ConfigEntry<string> autoStart, debugLoadMap;
 		ConfigEntry<bool> debugCombat, debugDumpMenu;
 		ConfigEntry<int> simLoss;
+		ConfigEntry<bool> levelTest, gunTest;
+		bool levelTested, gunTested;
 		ConfigEntry<string> shotDir;
 		bool menuDumped;
 		string autoStartMode = ""; bool mapLoadRequested, trailTested; int lastProbe = -1, lastPlace = -1, lastAware = -1; Vector3? fakeHead; float combatClock = -1f; int combatStep;
@@ -56,12 +60,17 @@ namespace CompoundMP
 			stopKey = Config.Bind("Keys", "Stop", KeyCode.F10, "Leave / stop the session");
 			useUpnp = Config.Bind("Network", "UseUPnP", true, "When hosting, ask the router to forward the UDP port automatically (UPnP)");
 			password = Config.Bind("Network", "Password", "", "Optional shared secret: a host with a password rejects joiners that do not use the same one");
+			hostName = Config.Bind("Network", "HostName", "COMPOUND co-op", "Name shown to other players on the LAN when you host");
+			lanOn = Config.Bind("Network", "LanDiscovery", true, "Announce your hosted game on the local network and list other hosts in the co-op menu");
+			recentHosts = Config.Bind("Network", "RecentHosts", "", "Last hosts joined, separated by ';' (managed by the mod)");
 			joinAddress = Config.Bind("Network", "JoinAddress", "127.0.0.1", "Host IP to join");
 			port = Config.Bind("Network", "Port", 27777, "UDP port (host must forward/open it)");
 			autoStart = Config.Bind("Debug", "AutoStart", "", "'host' or 'join' to start a session on launch (headless testing)");
 			debugLoadMap = Config.Bind("Debug", "LoadMap", "", "Scene to load a few seconds after launch (headless testing)");
 			shotDir = Config.Bind("Debug", "ScreenshotDir", "", "Save PNG screenshots here (development; needs graphics)");
 			Shot.Dir = shotDir.Value;
+			levelTest = Config.Bind("Debug", "LevelTest", false, "Host changes level a while into the combat scenario (testing level sync)");
+			gunTest = Config.Bind("Debug", "GunTest", false, "Client fires one player bullet in the combat scenario (testing projectile relay)");
 			simLoss = Config.Bind("Debug", "SimulatedLossPercent", 0, "Drop this percentage of outgoing packets (testing how the game copes with a lossy network)");
 			debugDumpMenu = Config.Bind("Debug", "DumpMenu", false, "Log the game's VR menu hierarchy (development)");
 			debugCombat = Config.Bind("Debug", "Combat", false, "Run a scripted enemy/damage sync check once enemies exist (headless testing)");
@@ -94,6 +103,7 @@ namespace CompoundMP
 			}
 			net.Pump();
 			Watchdog();
+			LevelSync.Tick();
 
 			sendTimer += Time.unscaledDeltaTime;
 			if (sendTimer >= SendInterval) { sendTimer = 0f; SendState(); }
@@ -107,6 +117,10 @@ namespace CompoundMP
 			if (!net.IsHost) enemies.ClientTick();
 
 			foreach (var a in Avatars.Values) a.Tick();
+			var pc = Singleton<GlobalGameInfo>.Instance?.PlayerControllerInstance;
+			bool localDead = pc != null && pc.IsDead();
+			if (localDead && !wasLocalDead && Avatars.Count > 0 && Avatars.Values.All(a => a.Dead)) Toast("Everyone is down");
+			wasLocalDead = localDead;
 
 			statusTimer += Time.unscaledDeltaTime;
 			if (statusTimer >= 5f)
@@ -116,7 +130,7 @@ namespace CompoundMP
 			}
 		}
 
-		void OnDestroy() => Stop();
+		void OnDestroy() { Stop(); lanListener?.Stop(); }
 
 		// Throughput since the previous call, total and for the busiest packet types, e.g. "tx=2.1kB/s rx=1.4kB/s [Enemies 1.1 State 0.8]".
 		readonly long[] prevSent = new long[256], prevRecv = new long[256];
@@ -140,7 +154,9 @@ namespace CompoundMP
 
 		// Connection upkeep: the client keeps asking to join until the host answers; each side drops a peer that went silent.
 		const float HelloRetry = 1f, HelloGiveUp = 15f, PeerTimeout = 10f, HostTimeout = 15f;
-bool welcomed; int helloTries; float helloTimer, lastHostRx;
+internal bool Welcomed => welcomed;
+		bool wasLocalDead;
+		bool welcomed; int helloTries; float helloTimer, lastHostRx;
 		byte[] pwKey, clientNonce;
 		readonly Dictionary<string, KeyValuePair<byte[], byte[]>> sessions = new Dictionary<string, KeyValuePair<byte[], byte[]>>(); // client id -> (client nonce, host nonce)
 		readonly Dictionary<string, float> lastSeen = new Dictionary<string, float>();
@@ -215,6 +231,32 @@ bool welcomed; int helloTries; float helloTimer, lastHostRx;
 				pd.InvincibilityCoolDown = 0f;
 				fakeHead = ep + Quaternion.Euler(0f, Mathf.Abs(MyId.GetHashCode()) % 360, 0f) * new Vector3(3f, 0f, 0f) + Vector3.up * 1.5f; // each test client stands at its own spot 3 m from enemy 0
 			}
+			if (!net.IsHost && gunTest.Value && t > 14f && !gunTested)
+			{
+				// A player bullet fired on a client: the host and other clients must receive a replica.
+				gunTested = true;
+				var all = Resources.FindObjectsOfTypeAll<BulletController>().Where(b => !b.gameObject.scene.IsValid() && !(b is HitscanBulletController) && b.GetComponent<Rigidbody>() != null).ToList();
+				Logger.LogInfo("[debug] bullet prefabs: " + string.Join(", ", all.Select(b => b.name).ToArray()));
+				var gunBullet = all.FirstOrDefault(b => !b.name.Contains("Enemy") && !b.name.StartsWith("Red")) ?? all.FirstOrDefault();
+				if (gunBullet != null)
+				{
+					var shot = Instantiate(gunBullet.gameObject, fakeHead.GetValueOrDefault(ep) + Vector3.up * 0.2f, Quaternion.LookRotation(ep - fakeHead.GetValueOrDefault(ep)));
+					shot.GetComponent<Rigidbody>().velocity = (ep - fakeHead.GetValueOrDefault(ep)).normalized * 30f;
+					Logger.LogInfo("[debug] client fired " + gunBullet.name);
+				}
+			}
+			if (net.IsHost && levelTest.Value && t > 40f && !levelTested)
+			{
+				levelTested = true;
+				var lt = FindObjectsOfType<NextLevelTrigger>().FirstOrDefault();
+				if (lt != null)
+				{
+					Logger.LogInfo("[debug] host changes level from " + g.CurrentMapName);
+					lt.NextMapName = "map01_sewers_b";
+					lt.ChangeLevel();
+				}
+				else Logger.LogInfo("[debug] no NextLevelTrigger in this scene");
+			}
 			if (net.IsHost && t > 12f && !trailTested)
 			{
 				// One real hitscan shot from the host, to exercise trail replication.
@@ -239,7 +281,31 @@ bool welcomed; int helloTries; float helloTimer, lastHostRx;
 
 		// ---- state shown by the in-game VR menu (CoopMenu.cs) ----
 
-		internal bool UpnpOn { get => useUpnp.Value; set => useUpnp.Value = value; }
+				internal bool UpnpOn { get => useUpnp.Value; set => useUpnp.Value = value; }
+		internal string PasswordText { get => password.Value; set => password.Value = value; }
+		internal bool HasPassword => password.Value != "";
+
+		// Hosts heard on the LAN (listener starts on first use) and the hosts joined before, most recent first.
+		internal List<LanDiscovery.HostInfo> LanHosts()
+		{
+			try
+			{
+				if (lanListener == null) { lanListener = new LanDiscovery.Listener(MyId); lanListener.Start(); }
+				return lanListener.Hosts();
+			}
+			catch (Exception e) { Logger.LogWarning("LAN listener failed: " + e.Message); lanListener = null; return new List<LanDiscovery.HostInfo>(); }
+		}
+		internal List<string> RecentHosts() => new List<string>(recentHosts.Value.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries));
+		void RememberHost(string target)
+		{
+			target = target.Trim();
+			if (target == "") return;
+			var list = RecentHosts();
+			list.RemoveAll(h => h == target);
+			list.Insert(0, target);
+			if (list.Count > 5) list.RemoveRange(5, list.Count - 5);
+			recentHosts.Value = string.Join(";", list.ToArray());
+		}
 		internal string JoinTarget { get => joinAddress.Value; set => joinAddress.Value = value; }
 		internal string StatusLine()
 		{
@@ -268,8 +334,17 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 				Toast("Hosting co-op on port " + port.Value);
 				if (useUpnp.Value)
 				{
-					upnp = new Upnp { Log = m => Logger.LogInfo(m) };
-					upnp.Start(port.Value, "COMPOUND co-op");
+				upnp = new Upnp { Log = m => Logger.LogInfo(m) };
+				upnp.Start(port.Value, "COMPOUND co-op");
+				}
+				if (lanOn.Value)
+				{
+					try
+					{
+						lanAnnouncer = new LanDiscovery.Announcer { Name = hostName.Value, GamePort = port.Value, NeedsPassword = pwKey != null, Players = () => net != null ? net.Clients.Count + 1 : 1 };
+						lanAnnouncer.Start();
+					}
+					catch (Exception e) { Logger.LogWarning("LAN announce failed: " + e.Message); lanAnnouncer = null; }
 				}
 			}
 			catch (Exception e) { Logger.LogError(e); menuNote = "Could not host: " + e.Message; Toast(menuNote); net?.Close(); net = null; }
@@ -320,6 +395,7 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 		internal void Stop()
 		{
 			if (upnp != null) { upnp.Stop(); upnp = null; }
+			if (lanAnnouncer != null) { lanAnnouncer.Stop(); lanAnnouncer = null; }
 			if (net == null) return;
 			try { net.Broadcast(Proto.Bye, w => w.Write(MyId)); } catch { }
 			net.Close();
@@ -333,7 +409,7 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 			Logger.LogInfo("Session stopped");
 		}
 
-		void Toast(string s)
+		internal void Toast(string s)
 		{
 			try { Singleton<GlobalGameInfo>.Instance.GameControllerInstance.MessageSystem.AddMessage(s); }
 			catch { }
@@ -402,6 +478,7 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 								net.SetKey(net.HostEp, Auth.SessionKey(pwKey, clientNonce, hn));
 							}
 							welcomed = true;
+							RememberHost(joinAddress.Value);
 							break;
 						}
 					case Proto.Reject when !host:
@@ -425,7 +502,9 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 							for (int i = 0; i < 3; i++) pose[i] = Pose3.Read(r);
 							bool dead = r.ReadBoolean();
 							if (!Avatars.TryGetValue(id, out var av)) Avatars[id] = av = new Avatar(id);
+							bool wasDead = av.Dead;
 							av.SetTarget(pose, dead);
+							if (dead && !wasDead) Toast("A player went down");
 							if (host) net.Broadcast(Proto.State, w => w.Write(data, 1, data.Length - 1), from); // relay to the other clients
 							break;
 						}
@@ -450,9 +529,20 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 							if (net.Fresh(from, seq)) enemies.HostApplyDamage(r.ReadInt32(), r.ReadInt32());
 							break;
 						}
+					case Proto.LevelChange when !host:
+						{
+							uint seq = r.ReadUInt32();
+							net.SendAck(from, seq);
+							if (net.Fresh(from, seq)) LevelSync.OnHostAnnounced(r.ReadString(), r.ReadInt32());
+							break;
+						}
 					case Proto.Projectile:
 						ProjectileSync.ReceiveProjectile(r);
 						if (host) net.Broadcast(Proto.Projectile, w => w.Write(data, 1, data.Length - 1), from);
+						break;
+					case Proto.Effect:
+						ProjectileSync.ReceiveEffect(r);
+						if (host) net.Broadcast(Proto.Effect, w => w.Write(data, 1, data.Length - 1), from);
 						break;
 					case Proto.Trail:
 						ProjectileSync.ReceiveTrail(r);
@@ -479,6 +569,13 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 		}
 
 		// Host: to every client. Client: to the host (which relays to the others).
+		// Host -> every client, reliably: a level change must not be lost.
+		internal void SendLevelChange(string map, int seed)
+		{
+			if (net == null || !net.IsHost) return;
+			foreach (var ep in net.Clients.Values) net.SendReliable(ep, Proto.LevelChange, w => { w.Write(map); w.Write(seed); });
+		}
+
 		internal static void NetSend(byte type, Action<BinaryWriter> body)
 		{
 			if (Running) Instance.net.Broadcast(type, body);
@@ -524,6 +621,7 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 		}
 
 		internal bool TryEnemyIndex(Damageable d, out int i) => enemies.TryGetIndex(d, out i);
+		internal Damageable EnemyAt(int i) => enemies.At(i);
 
 		// Client -> host.
 		internal void SendEnemyDamage(int index, int dmg)

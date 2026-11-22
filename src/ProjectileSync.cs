@@ -16,10 +16,10 @@ namespace CompoundMP
 		static readonly Dictionary<string, float> missing = new Dictionary<string, float>(); // key -> next retry time
 		static readonly HashSet<int> sent = new HashSet<int>();
 		static float windowStart; static int windowCount;
-		static int sentCount, recvCount, trailSentCount, trailRecvCount, droppedCount, replicaLogs;
+		static int sentCount, recvCount, trailSentCount, trailRecvCount, droppedCount, replicaLogs, fxSentCount, fxRecvCount;
 		internal static bool Replaying;
 
-		public static string Stats() => $"proj={sentCount}/{recvCount} trail={trailSentCount}/{trailRecvCount} dropped={droppedCount}";
+		public static string Stats() => $"proj={sentCount}/{recvCount} trail={trailSentCount}/{trailRecvCount} fx={fxSentCount}/{fxRecvCount} dropped={droppedCount}";
 
 		static string KeyOf(GameObject go) => go.name.EndsWith("(Clone)") ? go.name.Substring(0, go.name.Length - 7) : go.name;
 
@@ -66,6 +66,44 @@ namespace CompoundMP
 			string key = KeyOf(b.gameObject);
 			Plugin.NetSend(Proto.Trail, w => { w.Write(key); Write(w, p1); Write(w, p2); });
 			trailSentCount++;
+		}
+
+		// An impact (sparks, blood, decals, their sounds) happened where a bullet hit something. Sent from the machine that
+		// owns the bullet; `enemy` is the host's enemy index when a living enemy was hit, so the hit reaction can be shown too.
+		public static void OnImpact(BulletController b, Damageable target, Vector3 pos, Vector3 normal)
+		{
+			if (!Plugin.Running || Replaying || b.GetComponent<ReplicaProjectile>() != null || !Allow()) return;
+			int enemy = -1;
+			if (target != null) Plugin.Instance.TryEnemyIndex(target, out enemy);
+			string key = KeyOf(b.gameObject);
+			Plugin.NetSend(Proto.Effect, w => { w.Write(key); w.Write(enemy); Write(w, pos); Write(w, normal); });
+			fxSentCount++;
+		}
+
+		static readonly System.Reflection.MethodInfo spawnImpact = AccessTools.Method(typeof(BulletController), "SpawnImpactObjects");
+
+		public static void ReceiveEffect(BinaryReader r)
+		{
+			string key = r.ReadString();
+			int enemy = r.ReadInt32();
+			Vector3 pos = ReadV3(r), normal = ReadV3(r);
+			var prefab = FindPrefab(key);
+			if (prefab == null) return;
+			// Run the bullet's own impact code on a throwaway copy so every effect style (and its sound) is reproduced exactly.
+			Replaying = true;
+			GameObject tmp = null;
+			try
+			{
+				tmp = Object.Instantiate(prefab);
+				var b = tmp.GetComponent<BulletController>();
+				b.enabled = false;
+				var target = enemy >= 0 ? Plugin.Instance.EnemyAt(enemy) : null;
+				var col = target != null ? target.GetComponentInChildren<Collider>() : null;
+				spawnImpact.Invoke(b, new object[] { target != null ? target.gameObject : null, target, pos, normal, col });
+				fxRecvCount++;
+			}
+			catch (System.Exception e) { Plugin.Log.LogWarning("Effect replay failed: " + (e.InnerException ?? e).Message); }
+			finally { if (tmp != null) Object.Destroy(tmp); Replaying = false; }
 		}
 
 		// ---- receiving ----

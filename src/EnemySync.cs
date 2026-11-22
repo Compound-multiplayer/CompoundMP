@@ -58,6 +58,12 @@ namespace CompoundMP
 			return $"n={list.Count} enemy0 dead={list[0].IsDead()} pos=({t.x:0.0},{t.y:0.0},{t.z:0.0}) frozen={frozen.Count}";
 		}
 
+		public Damageable At(int i)
+		{
+			var list = Refresh();
+			return list != null && i >= 0 && i < list.Count ? list[i] : null;
+		}
+
 		public bool TryGetIndex(Damageable d, out int i)
 		{
 			i = -1;

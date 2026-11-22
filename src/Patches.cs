@@ -140,3 +140,14 @@ namespace CompoundMP
 		static void Postfix(HitscanBulletController __instance, Vector3 p1, Vector3 p2) => ProjectileSync.OnTrail(__instance, p1, p2);
 	}
 }
+
+namespace CompoundMP
+{
+	// Impacts (sparks, blood, decals) for replicated bullets: see ProjectileSync.OnImpact.
+	[HarmonyPatch(typeof(BulletController), "SpawnImpactObjects")]
+	static class ImpactPatch
+	{
+		static void Postfix(BulletController __instance, Damageable targetDamageInfo, Vector3 hitObjectSpawnLocation, Vector3 hitNormal)
+			=> ProjectileSync.OnImpact(__instance, targetDamageInfo, hitObjectSpawnLocation, hitNormal);
+	}
+}

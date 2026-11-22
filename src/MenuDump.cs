@@ -51,10 +51,65 @@ namespace CompoundMP
 			log.LogInfo("[menu] running=" + Plugin.Running + " host=" + Plugin.IsHost);
 			Press(log, page, "Stop");
 			log.LogInfo("[menu] after stop running=" + Plugin.Running);
+			// ---- keyboard page: hostname with a shifted letter, then the password ----
+			var plugin = Plugin.Instance;
+			string savedAddress = plugin.JoinTarget, savedPassword = plugin.PasswordText;
+			Press(log, page, "Keyboard");
+			yield return new WaitForSeconds(1f);
+			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
+			log.LogInfo("[menu] keyboard page title: " + page.transform.Find("Title").GetComponent<ASCIIText>().DisplayText + ", keys=" + page.GetComponentsInChildren<CoopOption>().Length);
+			foreach (var o in page.GetComponentsInChildren<CoopOption>()) { var c = o.GetComponent<BoxCollider>(); if (c == null || !Physics.OverlapSphere(c.bounds.center, 0.0275f, 1 << LayerMask.NameToLayer("Menu")).Any(h => h.gameObject == o.gameObject)) log.LogInfo("[menu] keyboard key not pokeable: " + o.name); }
+			PressText(log, page, "CLEAR");
+			PressText(log, page, "SHIFT");
+			foreach (var ch in "play.example.org") PressText(log, page, ch.ToString());
+			log.LogInfo("[menu] keyboard typed address = " + plugin.JoinTarget);
+			PressText(log, page, "DONE");
+			yield return new WaitForSeconds(1f);
+			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
+			Press(log, page, "Password");
+			yield return new WaitForSeconds(1f);
+			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
+			PressText(log, page, "CLEAR");
+			foreach (var ch in "pw_1") PressText(log, page, ch.ToString());
+			log.LogInfo("[menu] keyboard typed password length = " + plugin.PasswordText.Length + ", shown as '" + page.transform.Find("Value").GetComponent<ASCIIText>().DisplayText + "'");
+			PressText(log, page, "DONE");
+			yield return new WaitForSeconds(1f);
+			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
+			log.LogInfo("[menu] password button reads: " + page.transform.Find("Password").GetComponent<MenuOption>().DisplayText);
+			plugin.JoinTarget = savedAddress; plugin.PasswordText = savedPassword;
+
+			// ---- find games page: a fake host announcing on loopback only ----
+			var fake = new LanDiscovery.Announcer { Id = "testhost", Name = "Test game", GamePort = 27999, Players = () => 2, Targets = new[] { new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, LanDiscovery.DiscoveryPort) }, Locals = new[] { System.Net.IPAddress.Loopback } };
+			fake.Start();
+			Press(log, page, "Find");
+			yield return new WaitForSeconds(4f);
+			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
+			log.LogInfo("[menu] hosts header: " + page.transform.Find("LanHeader").GetComponent<ASCIIText>().DisplayText);
+			log.LogInfo("[menu] hosts row 0: '" + page.transform.Find("Lan0").GetComponent<MenuOption>().DisplayText + "' row 1: '" + page.transform.Find("Lan1").GetComponent<MenuOption>().DisplayText + "'");
+			Press(log, page, "Lan0");
+			log.LogInfo("[menu] picked LAN host: join target = " + plugin.JoinTarget + ", session started = " + Plugin.Running);
+			plugin.Stop();
+			fake.Stop();
+			plugin.JoinTarget = savedAddress;
+			yield return new WaitForSeconds(1f);
+			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
 			Press(log, page, "Back");
 			yield return new WaitForSeconds(1f);
 			var back = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
 			log.LogInfo("[menu] back at main menu: " + (back != null && back.name.StartsWith("BaseMenu")) + " with co-op entry: " + (back != null && back.transform.Find("Co-op") != null));
+		}
+
+		// Presses the option whose label is `text` (case-insensitive, ignoring a trailing '*').
+		static void PressText(ManualLogSource log, GameObject page, string text)
+		{
+			foreach (var o in page.GetComponentsInChildren<CoopOption>())
+				if (string.Equals(o.DisplayText.TrimEnd('*'), text, System.StringComparison.OrdinalIgnoreCase) && o.DisplayText.Length > 0)
+				{
+					o.Select();
+					o.SendMessage("LateUpdate"); // refresh labels now, as the next frame would
+					return;
+				}
+			log.LogInfo("[menu] no option labelled " + text);
 		}
 
 		static void Press(ManualLogSource log, GameObject page, string name)
