@@ -30,7 +30,8 @@ namespace CompoundMP
 		ConfigEntry<string> autoStart, debugLoadMap;
 		ConfigEntry<bool> debugCombat, debugDumpMenu;
 		ConfigEntry<int> simLoss;
-		ConfigEntry<bool> levelTest, gunTest, hostQuitTest;
+		ConfigEntry<bool> levelTest, gunTest, hostQuitTest, mpShot;
+		int mpShots;
 		bool levelTested, gunTested;
 		ConfigEntry<string> shotDir;
 		bool menuDumped;
@@ -69,6 +70,7 @@ namespace CompoundMP
 			debugLoadMap = Config.Bind("Debug", "LoadMap", "", "Scene to load a few seconds after launch (headless testing)");
 			shotDir = Config.Bind("Debug", "ScreenshotDir", "", "Save PNG screenshots here (development; needs graphics)");
 			Shot.Dir = shotDir.Value;
+			mpShot = Config.Bind("Debug", "MultiplayerShot", false, "Save screenshots of the combat scenario from near the first enemy (needs ScreenshotDir and a rendering game)");
 			hostQuitTest = Config.Bind("Debug", "HostQuitTest", false, "Host leaves the session 90 s into the combat scenario (testing that clients notice)");
 			levelTest = Config.Bind("Debug", "LevelTest", false, "Host changes level a while into the combat scenario (testing level sync)");
 			gunTest = Config.Bind("Debug", "GunTest", false, "Client fires one player bullet in the combat scenario (testing projectile relay)");
@@ -98,6 +100,7 @@ namespace CompoundMP
 			if (Input.GetKeyDown(joinKey.Value)) StartClient();
 			if (Input.GetKeyDown(stopKey.Value)) Stop();
 			DebugDriver();
+			SteamJoin.Tick(Time.unscaledTime);
 			if (net == null) return;
 
 			while (net.TryDequeue(out var from, out var data))
@@ -131,6 +134,7 @@ namespace CompoundMP
 			if (statusTimer >= 5f)
 			{
 				statusTimer = 0f;
+				if (net.IsHost) SteamJoin.Publish(SteamConnectAddress());
 				Logger.LogInfo($"[status] {(net.IsHost ? "host" : "client")} peers={(net.IsHost ? net.Clients.Count : Avatars.Count)} avatars={Avatars.Count} seed={(HasHostSeed ? HostSeed.ToString() : "-")} {(upnp != null ? upnp.Status + " " : "")}{ProjectileSync.Stats()} {NetRates(5f)} map={EnemySync.MapName} {enemies.Summary()}");
 			}
 		}
@@ -250,6 +254,22 @@ internal bool Welcomed => welcomed;
 					Logger.LogInfo("[debug] client fired " + gunBullet.name);
 				}
 			}
+			if (mpShot.Value && mpShots < 3 && t > 22f + mpShots * 5f)
+			{
+				// The scene as a player in the fight sees it: the first enemy, the other player's avatar and the bullets between them.
+				int n = ++mpShots;
+				Vector3 camPos = ep + Quaternion.Euler(0f, 40f, 0f) * new Vector3(0f, 2.2f, -6.5f), look = ep + new Vector3(1.2f, 1.2f, 0f);
+  var other = Avatars.Values.FirstOrDefault();
+  if (net.IsHost && other != null)
+  {
+    // from behind the other player's avatar, so the avatar is in front and the enemy and its bullets are beyond it
+    Vector3 h = other.HeadPos, away = new Vector3(h.x - ep.x, 0f, h.z - ep.z).normalized;
+    camPos = h + away * 3.2f + Vector3.up * 0.5f; look = (h + ep) * 0.5f + Vector3.up * 0.4f;
+  }
+  else if (!net.IsHost && fakeHead.HasValue) { camPos = fakeHead.Value; look = ep + Vector3.up * 1.2f; } // through this player's own eyes
+  var cam = Shot.ViewCamera(camPos, look, 70f);
+				StartCoroutine(Shot.CaptureRoutine(cam, (net.IsHost ? "multiplayer_host_view_" : "multiplayer_client_view_") + n));
+			}
 			if (net.IsHost && hostQuitTest.Value && t > 90f) { Logger.LogInfo("[debug] host leaves"); Stop(); }
 			if (net.IsHost && levelTest.Value && t > 40f && !levelTested)
 			{
@@ -316,14 +336,33 @@ internal bool Welcomed => welcomed;
 		internal string StatusLine()
 		{
 			if (net == null) return menuNote != "" ? menuNote : "Not connected";
-			if (net.IsHost) return $"Hosting on port {port.Value} - {net.Clients.Count} player(s) connected";
+			if (net.IsHost) return $"Hosting on {port.Value} - {net.Clients.Count + 1} player(s)";
 			return HasHostSeed ? "Joined - synced with host" : "Joining " + net.HostEp + "...";
 		}
+		// What Steam friends connect to: the public address when the router mapping worked, else this PC's LAN address.
+		string SteamConnectAddress()
+		{
+			string ip = upnp != null && upnp.ExternalIp != null && !Upnp.IsPrivate(upnp.ExternalIp) ? upnp.ExternalIp : null;
+			if (ip == null)
+				foreach (var a in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
+					if (a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(a)) { ip = a.ToString(); break; }
+			return ip == null ? "" : ip + ":" + port.Value;
+		}
+
+		// A Steam friend pressed "Join Game" while this game was already running.
+		internal void JoinFromSteam(string connect)
+		{
+			if (string.IsNullOrEmpty(connect)) return;
+			joinAddress.Value = connect.Trim();
+			Toast("Joining a friend's game");
+			StartClient();
+		}
+
 		string inviteLogged = "";
 		internal string NetLine()
 		{
-			if (net == null || !net.IsHost) return net == null ? "Return to HQ and start a new run once connected" : "Start a new run from HQ to play together";
-			if (upnp == null) return "UPnP off - forward UDP " + port.Value + " or use a VPN";
+			if (net == null || !net.IsHost) return net == null ? "Start a run from HQ once connected" : "The host starts the next level";
+			if (upnp == null) return "Forward UDP " + port.Value + " or use a VPN";
 			if (upnp.ExternalIp != null && inviteLogged != upnp.ExternalIp)
 			{
 				inviteLogged = upnp.ExternalIp;
@@ -408,6 +447,7 @@ pwKey = password.Value != "" ? Auth.PasswordKey(password.Value) : null;
 		{
 			if (upnp != null) { upnp.Stop(); upnp = null; }
 			if (lanAnnouncer != null) { lanAnnouncer.Stop(); lanAnnouncer = null; }
+			SteamJoin.Publish("");
 			if (net == null) return;
 			try { net.Broadcast(Proto.Bye, w => w.Write(MyId)); } catch { }
 			net.Close();

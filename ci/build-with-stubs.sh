@@ -29,6 +29,7 @@ cp "$CACHE"/x/BepInEx/core/*.dll "$GAME/BepInEx/core/"
 cp "$CACHE"/x/lib/net45/UnityEngine*.dll "$GAME/COMPOUND_Data/Managed/"
 
 MANAGED="$(pwd)/$GAME/COMPOUND_Data/Managed"
+dotnet build ci/stubs-firstpass -c Release -o "$MANAGED"
 dotnet build ci/stubs -c Release -p:UnityDir="$MANAGED" -o "$MANAGED"
 dotnet build src -c Release -p:GameDir="$(pwd)/$GAME" -o ci/.out
 echo "plugin compiled against stubs: ci/.out/CompoundMP.dll"

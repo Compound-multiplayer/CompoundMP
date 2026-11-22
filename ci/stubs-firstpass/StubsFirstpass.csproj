@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Reference-only stand-in for the Steamworks.NET types in the game's Assembly-CSharp-firstpass.dll: just the members the plugin uses. -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>Assembly-CSharp-firstpass</AssemblyName>
+    <LangVersion>10</LangVersion>
+    <Nullable>disable</Nullable>
+    <NoWarn>CS0649;CS0169;CS0414;CS8981</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

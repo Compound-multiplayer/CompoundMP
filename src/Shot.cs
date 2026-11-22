@@ -55,6 +55,22 @@ namespace CompoundMP
 			Plugin.Log.LogInfo("[shot] saved " + name + ".png, centre pixel " + tex.GetPixel(w / 2, h / 2));
 		}
 
+		// A normal perspective camera for scene shots (everything visible, not sent to the headset).
+		public static Camera ViewCamera(Vector3 pos, Vector3 lookAt, float fov = 65f)
+		{
+			var go = new GameObject("ShotCam");
+			var cam = go.AddComponent<Camera>();
+			go.transform.position = pos;
+			go.transform.LookAt(lookAt);
+			cam.stereoTargetEye = StereoTargetEyeMask.None;
+			cam.fieldOfView = fov;
+			cam.nearClipPlane = 0.05f; cam.farClipPlane = 200f;
+			cam.clearFlags = CameraClearFlags.Skybox;
+			cam.cullingMask = ~0;
+			cam.enabled = false;
+			return cam;
+		}
+
 		// Orthographic camera looking at a menu laid out in its local XY plane (viewer on -Z, like the player).
 		public static Camera MenuCamera(Transform menu, Vector2 centre, float halfHeightUnits)
 		{
@@ -63,12 +79,13 @@ namespace CompoundMP
 			float s = menu.lossyScale.x;
 			go.transform.position = menu.TransformPoint(new Vector3(centre.x, centre.y, -20f));
 			go.transform.rotation = menu.rotation;
+			cam.stereoTargetEye = StereoTargetEyeMask.None; // otherwise a VR build sends this camera to the headset, not the texture
 			cam.orthographic = true;
 			cam.orthographicSize = halfHeightUnits * s;
 			cam.nearClipPlane = 0.01f; cam.farClipPlane = 100f * s + 50f;
 			cam.clearFlags = CameraClearFlags.SolidColor;
 			cam.backgroundColor = new Color(0.05f, 0.06f, 0.08f);
-			cam.cullingMask = 1 << LayerMask.NameToLayer("Menu") | 1;
+			cam.cullingMask = 1 << LayerMask.NameToLayer("Menu"); // just the menu on a plain background
 			cam.enabled = false;
 			return cam;
 		}

@@ -67,11 +67,12 @@ namespace CompoundMP
 			return o;
 		}
 
-		static CoopLabel Text(Transform parent, string name, float x, float y, float scale, Func<string> label)
+		static CoopLabel Text(Transform parent, string name, float x, float y, float scale, Func<string> label, int wrapAt = 256)
 		{
 			var o = NewChild(parent, name, new Vector3(x, y, 0f), scale).AddComponent<CoopLabel>();
 			o.ASCIITextObject = template.ASCIITextNormal;
 			o.Alignment = ASCIIText.TextAlignment.AlignCentre;
+			o.MaxLength = wrapAt; // long status lines wrap onto a second line instead of running off the menu
 			o.Label = label;
 			o.DisplayText = label();
 			return o;
@@ -105,8 +106,8 @@ namespace CompoundMP
 		{
 			var plugin = Plugin.Instance;
 			Text(t, "Title", 0f, 20f, 1.2f, () => "CO-OP MULTIPLAYER");
-			Text(t, "Status", 0f, 18f, 1f, plugin.StatusLine);
-			Text(t, "Net", 0f, 16f, 1f, plugin.NetLine);
+			Text(t, "Status", 0f, 18.5f, 1f, plugin.StatusLine, 36);
+			Text(t, "Net", 0f, 16f, 1f, plugin.NetLine, 36);
 
 			Option(t, "Host", 0f, 13f, 1.2f, () => "HOST GAME", plugin.StartHost, "Start hosting. Friends join with your public IP");
 			Option(t, "Upnp", 0f, 11f, 1.2f, () => "UPNP: " + (plugin.UpnpOn ? "ON" : "OFF"), () => plugin.UpnpOn = !plugin.UpnpOn,
@@ -122,14 +123,14 @@ namespace CompoundMP
 					if (plugin.JoinTarget.Length < MaxAddress) plugin.JoinTarget += k;
 				}, "Type the host's IP address");
 			}
-			Option(t, "Del", 9f, 6f, 1.2f, () => "DEL", () => { var a = plugin.JoinTarget; if (a.Length > 0) plugin.JoinTarget = a.Substring(0, a.Length - 1); });
-			Option(t, "Clear", 9f, 4f, 1.2f, () => "CLEAR", () => plugin.JoinTarget = "");
-			Option(t, "Join", 9f, 2f, 1.2f, () => "JOIN GAME", plugin.StartClient, "Join the host at the address shown");
-			Option(t, "Stop", 9f, 0f, 1.2f, () => "DISCONNECT", plugin.Stop, "Leave the co-op session");
+			Option(t, "Del", 13f, 6f, 1.2f, () => "DEL", () => { var a = plugin.JoinTarget; if (a.Length > 0) plugin.JoinTarget = a.Substring(0, a.Length - 1); });
+			Option(t, "Clear", 13f, 4f, 1.2f, () => "CLEAR", () => plugin.JoinTarget = "");
+			Option(t, "Join", 13f, 2f, 1.2f, () => "JOIN GAME", plugin.StartClient, "Join the host at the address shown");
+			Option(t, "Stop", 13f, 0f, 1.2f, () => "DISCONNECT", plugin.Stop, "Leave the co-op session");
 
-			Option(t, "Find", -10.5f, 6f, 1.2f, () => "FIND GAMES", () => Show(mb, BuildHosts), "Games on your network and hosts you joined before");
-			Option(t, "Keyboard", -10.5f, 4f, 1.2f, () => "KEYBOARD", () => { kbTarget = KbTarget.Address; Show(mb, BuildKeyboard); }, "Type a hostname with letters");
-			Option(t, "Password", -10.5f, 2f, 1.2f, () => "PASSWORD:" + (plugin.HasPassword ? "ON" : "OFF"), () => { kbTarget = KbTarget.Password; Show(mb, BuildKeyboard); },
+			Option(t, "Find", -14f, 6f, 1.2f, () => "FIND GAMES", () => Show(mb, BuildHosts), "Games on your network and hosts you joined before");
+			Option(t, "Keyboard", -14f, 4f, 1.2f, () => "KEYBOARD", () => { kbTarget = KbTarget.Address; Show(mb, BuildKeyboard); }, "Type a hostname with letters");
+			Option(t, "Password", -14f, 2f, 1.2f, () => "PASSWORD:" + (plugin.HasPassword ? "ON" : "OFF"), () => { kbTarget = KbTarget.Password; Show(mb, BuildKeyboard); },
 				"Shared secret: the host and the players joining must use the same one");
 			Option(t, "Back", 0f, -3f, 1f, () => "Back To Main Menu", () => mb.SwitchMenu(MenuButton.Submenu.BaseMenu));
 		}

@@ -15,6 +15,7 @@ public class ASCIIText : MonoBehaviour {
 	public void UpdateDisplay() { }
 	public GameObject ASCIITextObject;
 	public TextAlignment Alignment;
+	public int MaxLength;
 }
 
 public class BaseMenu : MonoBehaviour {
@@ -120,6 +121,9 @@ public class MenuOptionChangeMenu : MenuOption {
 public interface MenuOptionInterface {
 }
 
+public class MenuSelector : MonoBehaviour {
+}
+
 public class MessageDisplay : MonoBehaviour {
 	public void AddMessage(string message) { }
 }
@@ -141,4 +145,11 @@ public class Settings {
 
 public class Singleton<T> : MonoBehaviour where T : MonoBehaviour {
 	public static T Instance { get { throw null; } set { } }
+}
+
+public class SteamManager : MonoBehaviour {
+	public static bool Initialized;
+}
+
+public class SteamVRWrapper : MonoBehaviour {
 }
