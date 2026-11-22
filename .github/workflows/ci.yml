@@ -57,11 +57,26 @@ jobs:
       - name: Run tests
         run: dotnet run --project tests -c Release
 
-  build:
-    name: Build plugin
+  compile:
+    name: Compile plugin against reference stubs
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      # BepInEx and the Unity reference assemblies are public downloads (checksummed); ci/stubs stands in for the game's
+      # Assembly-CSharp. This proves every push (and fork PR) still compiles without any game files.
+      - name: Build against stubs
+        run: ./ci/build-with-stubs.sh
+
+  build:
+    name: Build plugin with the game assemblies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: compile
     outputs:
       built: ${{ steps.game.outputs.available }}
     env:

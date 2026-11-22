@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Reference-only stand-in for the game's Assembly-CSharp.dll: just the types and members the plugin touches, with
+       empty bodies. It exists so CI can compile the plugin without the game's copyrighted assemblies. -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>Assembly-CSharp</AssemblyName>
+    <LangVersion>10</LangVersion>
+    <Nullable>disable</Nullable>
+    <UnityDir Condition="'$(UnityDir)' == ''">$(MSBuildProjectDirectory)/../.stubgame/COMPOUND_Data/Managed</UnityDir>
+    <NoWarn>CS0649;CS0169;CS0414;CS8981</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="UnityEngine"><HintPath>$(UnityDir)/UnityEngine.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(UnityDir)/UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(UnityDir)/UnityEngine.PhysicsModule.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>
