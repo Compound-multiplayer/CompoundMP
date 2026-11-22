@@ -283,6 +283,32 @@ Check(Wait(host, out _) != null, "host survives junk packet");
 	Check(!dead.QueryExternalAddress(), "NAT-PMP reports failure when the gateway does not answer");
 }
 
+// ---- LAN discovery: announcements, version filtering, expiry ----
+{
+	int dport = 38800 + new Random().Next(100);
+	var listener = new LanDiscovery.Listener("me", dport);
+	listener.Start();
+	var ann = new LanDiscovery.Announcer { Id = "host1", Name = "Friday game", GamePort = 27777, NeedsPassword = true, Players = () => 3,
+		Targets = new[] { new IPEndPoint(IPAddress.Loopback, dport) }, Locals = new[] { IPAddress.Loopback } };
+	ann.Start();
+	var seenUntil = DateTime.UtcNow.AddSeconds(5);
+	while (listener.Hosts().Count == 0 && DateTime.UtcNow < seenUntil) Thread.Sleep(50);
+	var found = listener.Hosts();
+	Check(found.Count == 1 && found[0].Name == "Friday game" && found[0].Players == 3 && found[0].NeedsPassword && found[0].Target == "127.0.0.1:27777", "listener hears a host announcement");
+	// own announcements and other protocol versions are ignored
+	var sender = new System.Net.Sockets.UdpClient();
+	var own = LanDiscovery.Build("me", "mine", 27777, 1, false); sender.Send(own, own.Length, new IPEndPoint(IPAddress.Loopback, dport));
+	var oldVer = LanDiscovery.Build("old", "old build", 27777, 1, false); oldVer[5] = 1; // the version byte follows the 5-byte "CMPD" string
+	sender.Send(oldVer, oldVer.Length, new IPEndPoint(IPAddress.Loopback, dport));
+	sender.Send(new byte[] { 1, 2, 3 }, 3, new IPEndPoint(IPAddress.Loopback, dport));
+	Thread.Sleep(500);
+	Check(listener.Hosts().Count == 1, "own, other-version and junk announcements are ignored");
+	ann.Stop();
+	Thread.Sleep(LanDiscovery.ExpireMs + 500);
+	Check(listener.Hosts().Count == 0, "a host that stops announcing disappears from the list");
+	listener.Stop();
+}
+
 host.Close(); c1.Close(); c2.Close();
 Console.WriteLine(fails == 0 ? "ALL PASSED" : fails + " FAILED");
 return fails;
