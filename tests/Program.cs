@@ -151,6 +151,45 @@ Check(Wait(host, out _) != null, "host survives junk packet");
 	http.Abort(); // the SSDP responder is a background thread; closing its socket mid-Receive can hang
 }
 
+// ---- reliable delivery: lost packets are re-sent, duplicates are appliedCount once ----
+{
+	int drops = 0;
+	c1.DropFilter = b => b[0] == Proto.EnemyDamage && drops++ < 2; // lose the first two transmissions
+	c1.SendReliable(c1.HostEp, Proto.EnemyDamage, w => { w.Write(42); w.Write(7); });
+	int appliedCount = 0, rxCount = 0;
+	var until = DateTime.UtcNow.AddSeconds(5);
+	while (DateTime.UtcNow < until && (c1.PendingCount > 0 || rxCount == 0))
+	{
+		c1.Pump();
+		while (host.TryDequeue(out var from2, out var d2))
+		{
+			var rd = new BinaryReader(new MemoryStream(d2));
+			byte ty = rd.ReadByte();
+			if (ty == Proto.EnemyDamage)
+			{
+				uint seq = rd.ReadUInt32(); rxCount++;
+				host.SendAck(from2, seq);
+				if (host.Fresh(from2, seq)) { appliedCount++; Check(rd.ReadInt32() == 42 && rd.ReadInt32() == 7, "reliable payload intact"); }
+			}
+		}
+		while (c1.TryDequeue(out _, out var d3)) { if (d3[0] == Proto.Ack) c1.Ack(new BinaryReader(new MemoryStream(d3, 1, 4)).ReadUInt32()); }
+		Thread.Sleep(10);
+	}
+	// a late duplicate of the same sequence must not be appliedCount twice
+	c1.DropFilter = null;
+	Check(appliedCount == 1, $"reliable damage applied exactly once after loss (appliedCount={appliedCount}, rxCount={rxCount})");
+	Check(c1.PendingCount == 0, "acked packet is no longer pending");
+	Check(drops >= 3, $"sender retried until the third transmission got through (transmissions={drops})");
+
+	// giving up: a peer that never acks is dropped after MaxTries
+	c2.DropFilter = b => true;
+	c2.SendReliable(c2.HostEp, Proto.PlayerDamage, w => w.Write(1));
+	var end2 = DateTime.UtcNow.AddMilliseconds(Transport.ResendMs * (Transport.MaxTries + 3));
+	while (DateTime.UtcNow < end2 && c2.PendingCount > 0) { c2.Pump(); Thread.Sleep(20); }
+	Check(c2.PendingCount == 0, "unacked packet is abandoned after MaxTries");
+	c2.DropFilter = null;
+}
+
 host.Close(); c1.Close(); c2.Close();
 Console.WriteLine(fails == 0 ? "ALL PASSED" : fails + " FAILED");
 return fails;

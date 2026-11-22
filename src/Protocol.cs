@@ -7,7 +7,7 @@ namespace CompoundMP
 	// Wire format. Kept free of UnityEngine so it can be tested outside the game.
 	public static class Proto
 	{
-		public const byte Hello = 1, Seed = 2, State = 3, Bye = 4, Enemies = 5, EnemyDamage = 6, PlayerDamage = 7, Projectile = 8, Trail = 9;
+		public const byte Hello = 1, Seed = 2, State = 3, Bye = 4, Enemies = 5, EnemyDamage = 6, PlayerDamage = 7, Projectile = 8, Trail = 9, Ack = 10, Welcome = 11, Reject = 12;
 		public const int EnemiesPerPacket = 40;
 
 		public struct EnemyRec
@@ -97,13 +97,65 @@ namespace CompoundMP
 			return ms.ToArray();
 		}
 
+		// Test hook: return true to silently drop an outgoing packet (simulates packet loss).
+		public Func<byte[], bool> DropFilter;
+
 		public void SendRaw(System.Net.IPEndPoint ep, byte[] b)
 		{
-			if (!running || ep == null) return;
+			if (!running || ep == null || (DropFilter != null && DropFilter(b))) return;
 			try { udp.Send(b, b.Length, ep); } catch (ObjectDisposedException) { }
 		}
 
 		public void SendTo(System.Net.IPEndPoint ep, byte type, Action<BinaryWriter> body) => SendRaw(ep, Build(type, body));
+
+		// ---- reliable delivery for events that must not be lost (damage) ----
+		// The packet carries a sequence number right after the type byte; the receiver answers with Proto.Ack and drops
+		// duplicates (Fresh). Unacknowledged packets are re-sent every ResendMs, up to MaxTries times. Main thread only.
+		public const int ResendMs = 200, MaxTries = 10;
+		class Pending { public System.Net.IPEndPoint Ep; public byte[] Data; public long NextMs; public int Tries; }
+		readonly Dictionary<uint, Pending> pending = new Dictionary<uint, Pending>();
+		readonly Dictionary<string, HashSet<uint>> seen = new Dictionary<string, HashSet<uint>>();
+		readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+		uint nextSeq = 1;
+		public int PendingCount => pending.Count;
+
+		public void SendReliable(System.Net.IPEndPoint ep, byte type, Action<BinaryWriter> body)
+		{
+			uint seq = nextSeq++;
+			byte[] data = Build(type, w => { w.Write(seq); body(w); });
+			pending[seq] = new Pending { Ep = ep, Data = data, NextMs = clock.ElapsedMilliseconds + ResendMs, Tries = 1 };
+			SendRaw(ep, data);
+		}
+
+		public void Ack(uint seq) => pending.Remove(seq);
+
+		public void SendAck(System.Net.IPEndPoint to, uint seq) => SendTo(to, Proto.Ack, w => w.Write(seq));
+
+		// True the first time (sender, seq) is seen; the caller still acks duplicates so the sender stops resending.
+		public bool Fresh(System.Net.IPEndPoint from, uint seq)
+		{
+			string key = from.ToString();
+			if (!seen.TryGetValue(key, out var set)) seen[key] = set = new HashSet<uint>();
+			if (set.Count > 1024) set.Clear();
+			return set.Add(seq);
+		}
+
+		// Call every frame: re-sends what is still unacknowledged.
+		public void Pump()
+		{
+			if (pending.Count == 0) return;
+			long now = clock.ElapsedMilliseconds;
+			List<uint> drop = null;
+			foreach (var kv in pending)
+			{
+				var p = kv.Value;
+				if (now < p.NextMs) continue;
+				if (p.Tries >= MaxTries) { (drop ?? (drop = new List<uint>())).Add(kv.Key); continue; }
+				p.Tries++; p.NextMs = now + ResendMs;
+				SendRaw(p.Ep, p.Data);
+			}
+			if (drop != null) foreach (var k in drop) pending.Remove(k);
+		}
 
 		// Host: every client except `except`. Client: the host.
 		public void Broadcast(byte type, Action<BinaryWriter> body, System.Net.IPEndPoint except = null)

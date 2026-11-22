@@ -23,7 +23,7 @@ namespace CompoundMP
 		ConfigEntry<bool> useUpnp;
 		Upnp upnp;
 		string menuNote = "";
-		ConfigEntry<string> joinAddress;
+		ConfigEntry<string> joinAddress, password;
 		ConfigEntry<int> port;
 		ConfigEntry<string> autoStart, debugLoadMap;
 		ConfigEntry<bool> debugCombat, debugDumpMenu;
@@ -54,6 +54,7 @@ namespace CompoundMP
 			joinKey = Config.Bind("Keys", "Join", KeyCode.F9, "Join the host at JoinAddress");
 			stopKey = Config.Bind("Keys", "Stop", KeyCode.F10, "Leave / stop the session");
 			useUpnp = Config.Bind("Network", "UseUPnP", true, "When hosting, ask the router to forward the UDP port automatically (UPnP)");
+			password = Config.Bind("Network", "Password", "", "Optional shared secret: a host with a password rejects joiners that do not use the same one");
 			joinAddress = Config.Bind("Network", "JoinAddress", "127.0.0.1", "Host IP to join");
 			port = Config.Bind("Network", "Port", 27777, "UDP port (host must forward/open it)");
 			autoStart = Config.Bind("Debug", "AutoStart", "", "'host' or 'join' to start a session on launch (headless testing)");
@@ -83,7 +84,14 @@ namespace CompoundMP
 			DebugDriver();
 			if (net == null) return;
 
-			while (net.TryDequeue(out var from, out var data)) Handle(from, data);
+			while (net.TryDequeue(out var from, out var data))
+			{
+				if (!net.IsHost && from.Equals(net.HostEp)) lastHostRx = Time.unscaledTime;
+				Handle(from, data);
+				if (net == null) return; // a Reject or Bye may have ended the session
+			}
+			net.Pump();
+			Watchdog();
 
 			sendTimer += Time.unscaledDeltaTime;
 			if (sendTimer >= SendInterval) { sendTimer = 0f; SendState(); }
@@ -107,6 +115,48 @@ namespace CompoundMP
 		}
 
 		void OnDestroy() => Stop();
+
+		// Connection upkeep: the client keeps asking to join until the host answers; each side drops a peer that went silent.
+		const float HelloRetry = 1f, HelloGiveUp = 15f, PeerTimeout = 10f, HostTimeout = 15f;
+		bool welcomed; int helloTries; float helloTimer, lastHostRx;
+		readonly Dictionary<string, float> lastSeen = new Dictionary<string, float>();
+
+		void Watchdog()
+		{
+			if (net.IsHost)
+			{
+				List<string> gone = null;
+				foreach (var kv in lastSeen)
+					if (Time.unscaledTime - kv.Value > PeerTimeout) (gone ?? (gone = new List<string>())).Add(kv.Key);
+				if (gone != null)
+					foreach (var id in gone)
+					{
+						lastSeen.Remove(id); net.Clients.Remove(id);
+						if (Avatars.TryGetValue(id, out var av)) { av.Destroy(); Avatars.Remove(id); }
+						Logger.LogInfo("Client timed out: " + id); Toast("A player lost connection");
+					}
+				return;
+			}
+			if (!welcomed)
+			{
+				helloTimer += Time.unscaledDeltaTime;
+				if (helloTimer >= HelloRetry)
+				{
+					helloTimer = 0f;
+					if (++helloTries * HelloRetry > HelloGiveUp) { Fail("No answer from the host at " + net.HostEp); return; }
+					SendHello();
+				}
+			}
+			else if (Time.unscaledTime - lastHostRx > HostTimeout) Fail("Lost connection to the host");
+		}
+
+		void Fail(string why)
+		{
+			Logger.LogWarning(why);
+			Stop();
+			menuNote = why;
+			Toast(why);
+		}
 
 		// Headless test driver: load a level, then exercise the real damage paths and log the results.
 		void DebugDriver()
@@ -213,12 +263,15 @@ namespace CompoundMP
 				var addr = ResolveHost(target);
 				net = new Transport(false, 0);
 				net.HostEp = new IPEndPoint(addr, hostPort);
-				net.SendTo(net.HostEp, Proto.Hello, w => w.Write(MyId));
+				welcomed = false; helloTries = 1; helloTimer = 0f; lastHostRx = Time.unscaledTime;
+				SendHello();
 				Logger.LogInfo("Joining " + net.HostEp);
 				Toast("Joining " + net.HostEp + " - return to HQ and start a new run");
 			}
 			catch (Exception e) { Logger.LogError(e); menuNote = "Could not join: " + e.Message; Toast(menuNote); net?.Close(); net = null; }
 		}
+
+		void SendHello() => net.SendTo(net.HostEp, Proto.Hello, w => { w.Write(MyId); w.Write(password.Value); });
 
 		// Accepts a dotted IP or a hostname (e.g. a dynamic-DNS name).
 		static IPAddress ResolveHost(string host)
@@ -237,6 +290,7 @@ namespace CompoundMP
 			try { net.Broadcast(Proto.Bye, w => w.Write(MyId)); } catch { }
 			net.Close();
 			net = null;
+			lastSeen.Clear();
 			HasHostSeed = false;
 			foreach (var a in Avatars.Values) a.Destroy();
 			Avatars.Clear();
@@ -264,12 +318,30 @@ namespace CompoundMP
 					case Proto.Hello when host:
 						{
 							string id = r.ReadString();
+							string pw = r.ReadString();
+							if (password.Value != "" && pw != password.Value)
+							{
+								Logger.LogWarning("Rejected " + from + ": wrong password");
+								net.SendTo(from, Proto.Reject, w => w.Write("Wrong password"));
+								break;
+							}
+							bool isNew = !net.Clients.ContainsKey(id);
 							net.Clients[id] = from;
-							Logger.LogInfo("Client joined: " + id);
-							Toast("Player joined");
-							SendSeed(from);
+							lastSeen[id] = Time.unscaledTime;
+							if (isNew) { Logger.LogInfo("Client joined: " + id); Toast("Player joined"); }
+							net.SendTo(from, Proto.Welcome, w => { });
+							SendSeed(from); // repeated Hellos re-send it, which is harmless
 							break;
 						}
+					case Proto.Welcome when !host:
+						welcomed = true;
+						break;
+					case Proto.Reject when !host:
+						Fail("Host refused the connection: " + r.ReadString());
+						break;
+					case Proto.Ack:
+						net.Ack(r.ReadUInt32());
+						break;
 					case Proto.Seed when !host:
 						HostSeed = r.ReadInt32();
 						HasHostSeed = true;
@@ -280,6 +352,7 @@ namespace CompoundMP
 						{
 							string id = r.ReadString();
 							if (id == MyId) break;
+							if (host) lastSeen[id] = Time.unscaledTime;
 							var pose = new Pose3[3];
 							for (int i = 0; i < 3; i++) pose[i] = Pose3.Read(r);
 							bool dead = r.ReadBoolean();
@@ -293,14 +366,19 @@ namespace CompoundMP
 							string id = r.ReadString();
 							if (Avatars.TryGetValue(id, out var av)) { av.Destroy(); Avatars.Remove(id); }
 							net.Clients.Remove(id);
+							lastSeen.Remove(id);
 							break;
 						}
 					case Proto.Enemies when !host:
 						enemies.ClientReceive(r);
 						break;
 					case Proto.EnemyDamage when host:
-						enemies.HostApplyDamage(r.ReadInt32(), r.ReadInt32());
-						break;
+						{
+							uint seq = r.ReadUInt32();
+							net.SendAck(from, seq);
+							if (net.Fresh(from, seq)) enemies.HostApplyDamage(r.ReadInt32(), r.ReadInt32());
+							break;
+						}
 					case Proto.Projectile:
 						ProjectileSync.ReceiveProjectile(r);
 						if (host) net.Broadcast(Proto.Projectile, w => w.Write(data, 1, data.Length - 1), from);
@@ -311,6 +389,9 @@ namespace CompoundMP
 						break;
 					case Proto.PlayerDamage when !host:
 						{
+							uint seq = r.ReadUInt32();
+							net.SendAck(from, seq);
+							if (!net.Fresh(from, seq)) break;
 							int dmg = r.ReadInt32();
 							var d = Singleton<GlobalGameInfo>.Instance?.PlayerControllerInstance?.DamageableComponent;
 							if (d == null) break;
@@ -368,7 +449,7 @@ namespace CompoundMP
 		internal void SendPlayerDamage(string id, int dmg)
 		{
 			if (net != null && net.Clients.TryGetValue(id, out var ep))
-				net.SendTo(ep, Proto.PlayerDamage, w => w.Write(dmg));
+				net.SendReliable(ep, Proto.PlayerDamage, w => w.Write(dmg));
 		}
 
 		internal bool TryEnemyIndex(Damageable d, out int i) => enemies.TryGetIndex(d, out i);
@@ -377,7 +458,7 @@ namespace CompoundMP
 		internal void SendEnemyDamage(int index, int dmg)
 		{
 			if (net != null && net.HostEp != null)
-				net.SendTo(net.HostEp, Proto.EnemyDamage, w => { w.Write(index); w.Write(dmg); });
+				net.SendReliable(net.HostEp, Proto.EnemyDamage, w => { w.Write(index); w.Write(dmg); });
 		}
 	}
 
