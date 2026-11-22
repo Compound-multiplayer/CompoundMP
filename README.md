@@ -37,8 +37,13 @@ What is synced
 - Enemies: host runs AI; clients freeze AI and follow host position/death. Enemies hunt the nearest player.
 - Enemy bullets hitting a ghost damage the real player on their machine. Client shots at enemies are applied on the host.
 
-Known limits: each player changes level at their own elevator;
-if the host player is dead, enemies still chase the nearest live player; client hit effects on enemies appear only on death.
+Known limits (each has a proposed spec in `openspec/changes/`):
+- each player changes level at their own elevator (`add-level-transition-sync`)
+- impact effects, hit reactions on living enemies and shot sounds are not replicated (`add-impact-effect-replication`)
+- hostnames and the join password can only be set in the config file, not in VR (`add-vr-text-entry`)
+- the join password is sent in clear text and packets are not authenticated (`add-session-encryption`)
+- UPnP does not help behind carrier-grade NAT (`add-nat-fallbacks`)
+- nothing has been tested with a real headset (`verify-in-headset`)
 
 Tests: `cd tests && dotnet run` exercises the wire protocol/transport over loopback UDP and UPnP against a fake router (no game needed).
 
@@ -95,3 +100,22 @@ BepInEx log/config; BepInEx 5 only keeps 5 log files per folder, and a shared co
 - no exceptions or bad packets in any log
 Not measured: frame rate / bandwidth with six players on real networks, and six real VR headsets.
 `AutoStart` is no longer written back to the config by the plugin (it raced between instances).
+
+## Connection handling (0.3.0)
+
+- Damage events (`EnemyDamage`, `PlayerDamage`) are reliable: sequence number, ack, re-send every 200 ms up to 10 times, duplicates applied once.
+- Joining: the client repeats Hello every second until the host answers Welcome (gives up after 15 s). Optional `Password` in
+  `[Network]`; the same value must be set on host and joiner. A wrong password gets a Reject and the client stops with a message.
+- A host drops a client silent for 10 s; a client leaves when the host is silent for 15 s.
+- Verified in the real game (two instances): wrong password rejected, right password joined and received damage 5 -> 0 with every hit
+  applied exactly once, a killed client was timed out by the host, a killed host was noticed by the client.
+
+## Repository layout
+
+- `src/` plugin sources (`dotnet build src -c Release -p:GameDir=...`)
+- `tests/` loopback, reliable-delivery and UPnP tests (`dotnet run --project tests`)
+- `openspec/` specs: current requirements, archived completed changes and proposed changes for the open items
+- `.github/workflows/ci.yml` conventional-commit check, tests, plugin build and release. The plugin build needs the repository secret
+  `GAME_ASSEMBLIES_URL` (a private download of a zip containing `COMPOUND_Data/Managed/*.dll`) because the game's assemblies cannot be
+  committed; without it the job is skipped with a notice and the tests still run.
+- Commits follow Conventional Commits.
