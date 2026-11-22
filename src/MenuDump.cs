@@ -12,10 +12,14 @@ namespace CompoundMP
 	{
 		public static IEnumerator Run(ManualLogSource log)
 		{
+			string origAddress = Plugin.Instance.JoinTarget, origPassword = Plugin.Instance.PasswordText, origRecent = Traverse.Create(Plugin.Instance).Field("recentHosts").Property("Value").GetValue<string>();
 			var mb = Resources.FindObjectsOfTypeAll<MenuButton>().FirstOrDefault(b => b.MenuPrefab != null && b.MenuTransform != null);
 			if (mb == null) { log.LogInfo("[menu] no MenuButton"); yield break; }
 			// Headless, the wrist button is never "ready" and MenuButton.Update would close the menu every frame.
 			mb.enabled = false;
+			// The wrist button shrinks to nothing unless looked at; keep it full size so the menu has a scale to photograph.
+			mb.Grower.SetOverrideBig(true);
+			yield return new WaitForSeconds(3f);
 			// Same steps as MenuButton.ToggleMenu
 			var menu = Object.Instantiate(mb.MenuPrefab);
 			menu.transform.parent = mb.MenuTransform;
@@ -28,7 +32,7 @@ namespace CompoundMP
 			if (entry == null) yield break;
 			Report(log, entry);
 			var cam = Shot.MenuCamera(menu.transform, new Vector2(0f, 11f), 13f);
-			Shot.Capture(cam, "menu_1_main");
+			yield return Shot.CaptureRoutine(cam, "menu_1_main");
 			entry.GetComponent<MenuOption>().Select();
 			yield return new WaitForSeconds(1f);
 
@@ -37,7 +41,7 @@ namespace CompoundMP
 			foreach (Transform c in page.transform) Report(log, c);
 			cam = Shot.MenuCamera(page.transform, new Vector2(4.5f, 8.5f), 13f);
 			yield return null;
-			Shot.Capture(cam, "menu_2_coop_page");
+			yield return Shot.CaptureRoutine(cam, "menu_2_coop_page");
 
 			Press(log, page, "Clear");
 			foreach (var k in new[] { "1", "9", "2", ".", "1", "6", "8", ".", "0", ".", "5" }) Press(log, page, "Key" + k);
@@ -47,7 +51,7 @@ namespace CompoundMP
 			Press(log, page, "Host");
 			yield return new WaitForSeconds(2f);
 			foreach (var l in page.GetComponentsInChildren<CoopLabel>()) log.LogInfo("[menu] label " + l.name + " = '" + l.DisplayText + "'");
-			Shot.Capture(cam, "menu_3_hosting");
+			yield return Shot.CaptureRoutine(cam, "menu_3_hosting");
 			log.LogInfo("[menu] running=" + Plugin.Running + " host=" + Plugin.IsHost);
 			Press(log, page, "Stop");
 			log.LogInfo("[menu] after stop running=" + Plugin.Running);
@@ -71,6 +75,7 @@ namespace CompoundMP
 			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
 			PressText(log, page, "CLEAR");
 			foreach (var ch in "pw_1") PressText(log, page, ch.ToString());
+			yield return null; // labels refresh in LateUpdate
 			log.LogInfo("[menu] keyboard typed password length = " + plugin.PasswordText.Length + ", shown as '" + page.transform.Find("Value").GetComponent<ASCIIText>().DisplayText + "'");
 			PressText(log, page, "DONE");
 			yield return new WaitForSeconds(1f);
@@ -79,6 +84,8 @@ namespace CompoundMP
 			plugin.JoinTarget = savedAddress; plugin.PasswordText = savedPassword;
 
 			// ---- find games page: a fake host announcing on loopback only ----
+			Traverse.Create(plugin).Method("RememberHost", new object[] { "10.0.0.5:27777" }).GetValue();
+			Traverse.Create(plugin).Method("RememberHost", new object[] { "play.example.org" }).GetValue();
 			var fake = new LanDiscovery.Announcer { Id = "testhost", Name = "Test game", GamePort = 27999, Players = () => 2, Targets = new[] { new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, LanDiscovery.DiscoveryPort) }, Locals = new[] { System.Net.IPAddress.Loopback } };
 			fake.Start();
 			Press(log, page, "Find");
@@ -86,6 +93,7 @@ namespace CompoundMP
 			page = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
 			log.LogInfo("[menu] hosts header: " + page.transform.Find("LanHeader").GetComponent<ASCIIText>().DisplayText);
 			log.LogInfo("[menu] hosts row 0: '" + page.transform.Find("Lan0").GetComponent<MenuOption>().DisplayText + "' row 1: '" + page.transform.Find("Lan1").GetComponent<MenuOption>().DisplayText + "'");
+			log.LogInfo("[menu] recent rows: '" + page.transform.Find("Recent0").GetComponent<MenuOption>().DisplayText + "', '" + page.transform.Find("Recent1").GetComponent<MenuOption>().DisplayText + "'");
 			Press(log, page, "Lan0");
 			log.LogInfo("[menu] picked LAN host: join target = " + plugin.JoinTarget + ", session started = " + Plugin.Running);
 			plugin.Stop();
@@ -97,6 +105,7 @@ namespace CompoundMP
 			yield return new WaitForSeconds(1f);
 			var back = Traverse.Create(mb).Field("Menu").GetValue<GameObject>();
 			log.LogInfo("[menu] back at main menu: " + (back != null && back.name.StartsWith("BaseMenu")) + " with co-op entry: " + (back != null && back.transform.Find("Co-op") != null));
+			plugin.JoinTarget = origAddress; plugin.PasswordText = origPassword; Traverse.Create(plugin).Field("recentHosts").Property("Value").SetValue(origRecent);
 		}
 
 		// Presses the option whose label is `text` (case-insensitive, ignoring a trailing '*').

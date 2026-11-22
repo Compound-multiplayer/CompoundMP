@@ -30,7 +30,7 @@ namespace CompoundMP
 		ConfigEntry<string> autoStart, debugLoadMap;
 		ConfigEntry<bool> debugCombat, debugDumpMenu;
 		ConfigEntry<int> simLoss;
-		ConfigEntry<bool> levelTest, gunTest;
+		ConfigEntry<bool> levelTest, gunTest, hostQuitTest;
 		bool levelTested, gunTested;
 		ConfigEntry<string> shotDir;
 		bool menuDumped;
@@ -69,6 +69,7 @@ namespace CompoundMP
 			debugLoadMap = Config.Bind("Debug", "LoadMap", "", "Scene to load a few seconds after launch (headless testing)");
 			shotDir = Config.Bind("Debug", "ScreenshotDir", "", "Save PNG screenshots here (development; needs graphics)");
 			Shot.Dir = shotDir.Value;
+			hostQuitTest = Config.Bind("Debug", "HostQuitTest", false, "Host leaves the session 90 s into the combat scenario (testing that clients notice)");
 			levelTest = Config.Bind("Debug", "LevelTest", false, "Host changes level a while into the combat scenario (testing level sync)");
 			gunTest = Config.Bind("Debug", "GunTest", false, "Client fires one player bullet in the combat scenario (testing projectile relay)");
 			simLoss = Config.Bind("Debug", "SimulatedLossPercent", 0, "Drop this percentage of outgoing packets (testing how the game copes with a lossy network)");
@@ -249,6 +250,7 @@ internal bool Welcomed => welcomed;
 					Logger.LogInfo("[debug] client fired " + gunBullet.name);
 				}
 			}
+			if (net.IsHost && hostQuitTest.Value && t > 90f) { Logger.LogInfo("[debug] host leaves"); Stop(); }
 			if (net.IsHost && levelTest.Value && t > 40f && !levelTested)
 			{
 				levelTested = true;
